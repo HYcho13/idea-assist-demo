@@ -1,0 +1,16 @@
+node_modules/
+dist-demo/
+.env
+.env.local
+.qa/
+dist/
+uploads/
+data/
+server/
+design-canvas/
+*_render/
+docx_render*/
+.idea/
+*.log
+.env.*
+!.env.example
