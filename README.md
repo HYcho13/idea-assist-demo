@@ -4,17 +4,37 @@ API 서버, REST/OpenAPI 계약, 데이터베이스 없이 동작하는 브라�
 
 ## 실행
 
-현재 PC에서는 의존성이 설치되어 있습니다. `start-demo.cmd`를 더블클릭하거나 아래 명령을 실행하세요.
+공유 저장소: [HYcho13/idea-assist-demo](https://github.com/HYcho13/idea-assist-demo). 비공개 저장소이므로 다른 계정에서 내려받으려면 소유자의 접근 권한이 필요합니다.
 
-```powershell
-pnpm.cmd dev
-```
+### 다른 Windows PC에서 실행
+
+1. Node.js 24 LTS를 npm과 함께 설치합니다. 최소 버전은 **22.13.0**입니다. 이미 설치되어 있다면 `node --version`으로 확인합니다.
+2. GitHub에서 `Code → Download ZIP`으로 내려받아 **압축을 풀거나**, 아래 명령으로 clone합니다. ZIP 실행에는 Git이 필요 없습니다.
+
+   ```powershell
+   git clone https://github.com/HYcho13/idea-assist-demo.git
+   cd idea-assist-demo
+   ```
+
+3. 압축 해제한 폴더의 `start-demo.cmd`를 더블클릭합니다. 필요한 패키지가 처음에는 인터넷으로 설치되며, pnpm을 따로 전역 설치할 필요는 없습니다.
+4. 실행 창에 준비 완료 주소가 표시되면 브라우저에서 아래 주소를 엽니다. 실행 창은 계속 켜둡니다.
 
 [시연 앱 열기](http://127.0.0.1:5180/)
 
+**파일을 내려받기만 하면 실행되는 Windows 실행 파일이나 Android APK는 아닙니다.** Node.js 설치와 최초 패키지 다운로드가 필요합니다. 그 외 API 키, `.env` 설정, API 서버, 데이터베이스는 필요 없습니다.
+
+### 터미널로 실행 (Windows·macOS·Linux)
+
+Windows PowerShell 기준 명령입니다. macOS·Linux에서는 `npm.cmd` 대신 `npm`을 사용합니다. 패키지 버전은 저장소의 lockfile로 고정합니다.
+
+```powershell
+npm.cmd exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile
+npm.cmd exec --yes --package=pnpm@11.25.0 -- pnpm dev
+```
+
 표시된 주소를 Chrome·Edge 또는 Codex 브라우저에서 여세요. 실행 창은 시연 동안 유지하고 끝나면 Ctrl+C로 종료합니다. Vite는 화면 파일을 읽는 개발용 실행 도구입니다. 카테고리·생성·저장용 API 서버는 실행하지 않습니다.
 
-다른 PC에서 처음 실행한다면 Node.js 22.12 이상과 pnpm을 준비한 뒤 `pnpm.cmd install`, `pnpm.cmd dev`를 실행합니다.
+5180 포트를 다른 앱이 사용하면 실행을 중단하고 오류를 표시합니다. 자동으로 다른 포트에 연결해 보관함 주소가 바뀌지 않도록 한 동작입니다. AI를 사용하지 않는 기본 간편 시연은 설치 이후 인터넷 없이 실행할 수 있습니다. 최초 패키지 설치와 AI 모델 최초 다운로드에는 인터넷이 필요합니다.
 
 ## 3분 시연 순서
 
@@ -71,7 +91,7 @@ pnpm.cmd dev
 
 로컬 작업공간의 이전 `server/`, `data/`, `src/main.jsx`는 이번 앱에서 사용하지 않으며 공유 저장소에도 포함하지 않습니다. 현재 진입점은 `src/demo-main.jsx`입니다. API·DB 관련 패키지와 실행 스크립트는 제거했습니다.
 
-공유받은 PC에서는 저장소를 clone한 뒤 `pnpm.cmd install`, `pnpm.cmd dev`를 실행하세요. 각 PC의 보관함은 독립적으로 저장됩니다. 다른 PC에 아이디어를 옮기려면 JSON 백업을 사용하세요.
+각 PC의 보관함은 독립적으로 저장됩니다. 저장소를 clone해도 원래 PC의 저장 아이디어나 AI 모델 캐시는 복사되지 않습니다. 다른 PC에 아이디어를 옮기려면 JSON 백업을 사용하세요.
 
 ## 파일 구성
 
@@ -84,8 +104,8 @@ pnpm.cmd dev
 - `tests/demo.test.js`: 고정·중복·발전·영속성·실패 검증
 
 ```powershell
-pnpm.cmd test
-pnpm.cmd build
+npm.cmd exec --yes --package=pnpm@11.25.0 -- pnpm test
+npm.cmd exec --yes --package=pnpm@11.25.0 -- pnpm build
 ```
 
 빌드 결과는 기존 결과물과 구분된 `dist-demo/`에 생성됩니다. 문서와 실제 구현 기준은 `시연용_개발기준.md`를 확인하세요.
