@@ -12,7 +12,7 @@ export function particle(value, pair) {
 const pick = (values, random) => values[Math.min(values.length - 1, Math.floor(random() * values.length))]
 
 export function drawWords(categoryId, { current = [], locked = [], custom = [], random = Math.random } = {}) {
-  const pools = wordPools[categoryId]
+  const pools = categoryId === 'custom' ? [0, 1, 2].map(i => [...new Set(Object.values(wordPools).flatMap(p => p[i]))]) : wordPools[categoryId]
   if (!pools) throw new Error('사용할 수 없는 카테고리예요.')
   if (locked.length > 2 || custom.length > 2) throw new Error('고정 단어는 최대 2개예요.')
   if (locked.some(i => !Number.isInteger(i) || i < 0 || i > 2 || !current[i])) throw new Error('고정 단어를 다시 확인해 주세요.')
@@ -45,12 +45,13 @@ export function validateIdea(value, words) {
 
 // This is a rule-based demonstration engine, explicitly labelled in the UI.
 // Actual neural generation lives in ai.js; a failed AI call never silently uses these templates.
-export function composeIdea({ categoryId, words, condition, variant = 0 }) {
+export function composeIdea({ categoryId, words, condition, variant = 0, topic = '' }) {
   if (words.length !== 3 || new Set(words).size !== 3) throw new Error('서로 다른 단어 3개가 필요해요.')
   const [a, b, c] = words
-  const category = categories.find(x => x.id === categoryId)
+  const category = categoryId === 'custom' && topic.trim() ? { name: topic } : categories.find(x => x.id === categoryId)
   if (!category) throw new Error('카테고리를 선택해 주세요.')
   const templates = {
+    custom: [0, 1, 2].map(i => ({ title: `${a} ${['연결', '실험', '발견'][i]}`, one_liner: `${topic} 주제에 ${a}, ${b}, ${c}를 연결하는 시연용 제안입니다.`, description: `${topic} 분야에서 ${a}를 소재로 작은 사용자 경험을 만듭니다. ${b}를 전달 방식으로, ${c}를 분위기로 연결합니다. 주제 적합성은 AI가 판단한 것이 아니며 직접 확인해야 합니다.`, steps: [`${topic}에서 ${a}와 연결할 필요를 사용자에게 질문하기`, `${b} 방식의 간단한 견본을 종이로 만들기`, `${c} 분위기의 안내를 적용하고 주제와 맞는지 의견 듣기`] })),
     food: [
       { title: `${a} 한입 여행`, one_liner: `${a} 메뉴를 ${b} 방식으로 즐기는 ${c} 콘셉트의 작은 음식 서비스`, description: `주재료는 ${a}, 제공 방식의 모티프는 ${b}, 공간과 포장의 분위기는 ${c}입니다. 메뉴 하나로 시작하고, 고객이 맛과 제공 경험을 함께 평가하게 합니다.`, steps: [`${a} 중심의 시식 메뉴 한 가지 만들기`, `${b} 모티프로 제공 동선과 포장 견본 만들기`, `${c} 콘셉트로 시식 카드 제작 후 3명에게 의견 듣기`] },
       { title: `${c}의 ${a} 실험실`, one_liner: `${b}에서 착안한 체험으로 직접 완성하는 ${a} 메뉴`, description: `${a} 중심의 작은 음식 키트를 만듭니다. ${b}의 특징을 체험 방식에 옮기고, ${particle(c, '을/를')} 테마로 고명과 포장을 바꿀 수 있게 합니다. 완성 메뉴와 체험 난이도를 함께 살펴봅니다.`, steps: [`${particle(a, '으로/로')} 만들 수 있는 간단한 키트 구성하기`, `${b}에서 떠올린 조립 순서와 안내 카드 만들기`, `${c} 테마로 2가지 견본을 만들어 체험 시간 비교하기`] },
@@ -67,7 +68,7 @@ export function composeIdea({ categoryId, words, condition, variant = 0 }) {
       { title: `${b} 도움 상자`, one_liner: `${a}의 불편을 줄일 작은 도구를 ${c} 테마로 제안`, description: `${a} 문제 중 한 가지 상황에 집중한 간단한 도움 도구를 만듭니다. ${b}에서 구성 방식을 가져오고 ${c}를 설명과 디자인의 모티프로 사용합니다. 실제 필요성은 당사자의 피드백으로 확인합니다.`, steps: [`${a} 문제 중 하나의 사용 상황 선택하기`, `${b} 방식의 도움 도구 견본 만들기`, `${c} 테마의 설명과 함께 당사자 의견을 구하기`] },
     ],
   }
-  return validateIdea({ ...templates[categoryId][variant % 3], id: uid(), used_words: [...words], categoryId, category: category.name, condition, source: 'local', revision: 1 }, words)
+  return validateIdea({ ...templates[categoryId][variant % 3], id: uid(), used_words: [...words], categoryId, category: category.name, ...(categoryId === 'custom' ? { topic } : {}), condition, source: 'local', revision: 1 }, words)
 }
 
 export function developIdea(idea, direction) {
@@ -89,7 +90,7 @@ export function elaborateIdea(idea) {
   const [a, b, c] = idea.used_words
   const targets = { food: '새로운 맛을 가볍게 경험하고 싶은 사람', program: '작은 일상 기록과 실천을 쉽게 관리하고 싶은 사람', contest: '해당 불편을 경험하는 당사자와 지역 참여자' }
   return {
-    target_user: targets[idea.categoryId],
+    target_user: targets[idea.categoryId] || `${idea.topic} 분야의 경험을 작게 시험하고 싶은 사용자`,
     problem: `${a} 관련 경험을 쉽게 시도하거나 필요할 때 다시 찾기 어렵다는 가설을 확인합니다.`,
     value: `${a}의 핵심 소재, ${b}의 방식, ${c}의 분위기를 한 가지 경험으로 연결합니다.`,
     core_features: [`${a} 중심의 한 가지 경험`, `${b} 모티프의 간단한 이용 흐름`, `${c} 테마의 결과와 피드백`],

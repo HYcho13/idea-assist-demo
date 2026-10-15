@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <instrumentation
+        android:name="com.ideaassist.app.AiDeviceInstrumentation"
+        android:targetPackage="com.ideaassist.app"
+        android:functionalTest="true"
+        android:label="Idea Assist real local AI smoke test" />
+    <instrumentation
+        android:name="com.ideaassist.app.AppCoreInstrumentation"
+        android:targetPackage="com.ideaassist.app"
+        android:functionalTest="true"
+        android:label="Idea Assist native UI and storage test" />
+</manifest>

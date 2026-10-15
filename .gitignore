@@ -14,3 +14,12 @@ docx_render*/
 *.log
 .env.*
 !.env.example
+android/.gradle/
+android/local.properties
+android/**/build/
+android/**/.cxx/
+android/vendor/
+*.gguf
+*.part
+*.jks
+*.keystore

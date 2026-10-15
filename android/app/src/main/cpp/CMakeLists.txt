@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(idea_llm LANGUAGES C CXX)
+include(FetchContent)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+# Baseline ISA runs on x86_64 emulators and all arm64 Android devices.
+foreach(feature AVX AVX2 FMA F16C AVX512 AVX512_VBMI AVX512_VNNI BMI2)
+    set(GGML_${feature} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(GGML_CPU_ARM_ARCH "armv8-a" CACHE STRING "" FORCE)
+FetchContent_Declare(llama
+    URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/091b6a7fc561b78da90a0ed2d524ec995458c657
+    URL_HASH SHA256=b9480565806ec45743a853906f44eaea197986d2329d37b8e700369e0bc89c8a)
+FetchContent_MakeAvailable(llama)
+add_library(idea_llm SHARED native_llm.cpp)
+target_link_libraries(idea_llm PRIVATE llama android log)
+# Explicit 16 KiB page alignment, also the default in NDK 28.
+target_link_options(idea_llm PRIVATE "-Wl,-z,max-page-size=16384")
