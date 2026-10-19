@@ -129,6 +129,14 @@ button:disabled { opacity: .45; }
 .saved-open p { color: var(--muted); font-size: 13px; }
 .saved-open .word-tags span { font-size: 11px; }
 .archive-tools .text-button { font-size: 13px; }
+.backup-help { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.modal.leave-modal { max-width: 420px; padding-top: 28px; box-shadow: 0 20px 70px #1c1c1e24; }
+.leave-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 20px; border-radius: 18px; color: #0066d6; background: #eaf2ff; }
+.leave-content .muted { font-size: 14px; line-height: 1.65; margin-bottom: 24px; }
+.leave-actions { display: grid; gap: 10px; }
+.leave-actions .primary + .secondary { margin-top: 0; }
+.leave-actions .leave-discard { color: #a52822; border-color: #ead6d3; }
+.leave-actions .text-button { color: #0066d6; }
 .success-icon { background: #eaf2ff; color: #007aff; border-color: transparent; }
 .empty-state { color: var(--muted); padding: 32px 0; }
 .empty-icon { background: #eaf2ff; color: #007aff; }

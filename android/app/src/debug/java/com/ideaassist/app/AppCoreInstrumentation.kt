@@ -59,6 +59,23 @@ class AppCoreInstrumentation : Instrumentation() {
             check(AppStore.validate(JSONObject(library.toString())).getJSONArray("ideas").length() == 1)
             check(runCatching { AppStore.validate(JSONObject().put("version", 999)) }.isFailure)
             passed.put("atomic_storage_and_backup_validation")
+            val txtFixture=targetContext.assets.open("web-txt-backup-fixture.txt").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val importedTxt=LibraryBackup.importText(txtFixture)
+            check(importedTxt.getJSONArray("ideas").getJSONObject(0).getString("topic")=="반려동물과 여행")
+            check(importedTxt.getJSONArray("ideas").getJSONObject(0).getJSONObject("elaboration").getJSONArray("core_features").length()==3)
+            importedTxt.put("apiKey","mock-private-settings-no-export").put("draft",JSONObject().put("apiKey","mock-private-draft-no-export"))
+            importedTxt.getJSONArray("ideas").getJSONObject(0).put("apiKey","mock-private-record-no-export")
+            val exportedTxt=LibraryBackup.exportText(importedTxt)
+            check(exportedTxt.startsWith("\uFEFF") && exportedTxt.contains("[아이디어 설명]") && exportedTxt.contains("[구체화]") && !exportedTxt.contains("mock-private") && !exportedTxt.contains("apiKey"))
+            check(LibraryBackup.importText(exportedTxt).getJSONArray("ideas").getJSONObject(0).getString("name")=="교차 복원 검사")
+            check(LibraryBackup.importText(importedTxt.toString()).getJSONArray("ideas").length()==1)
+            check(LibraryBackup.merge(LibraryBackup.importText(exportedTxt),LibraryBackup.importText(exportedTxt)).getJSONArray("ideas").length()==1)
+            check(LibraryBackup.importText(LibraryBackup.exportText(AppStore.fresh())).getJSONArray("ideas").length()==0)
+            listOf("일반 메모",exportedTxt.replace(LibraryBackup.END,""),exportedTxt.replace("\"version\": 1","\"version\": 99"),"{broken","{\"nested\":"+"[".repeat(40)+"0"+"]".repeat(40)+"}").forEach {
+                check(runCatching { LibraryBackup.importText(it) }.isFailure)
+            }
+            File(targetContext.cacheDir,"core-native-txt-backup.txt").writeText(exportedTxt,Charsets.UTF_8)
+            passed.put("readable_txt_web_fixture_native_roundtrip_legacy_json_merge_invalid_rejection_no_keys")
             val legacy=JSONObject(fixture.toString()).put("id","legacy-name").put("name","직접 주제 검증 · 규칙 abc123")
             val manual=JSONObject(fixture.toString()).put("id","manual-name").put("name","사용자 제목")
             val migrated=AppStore.validate(AppStore.fresh().put("ideas",JSONArray().put(manual).put(legacy)))
@@ -211,6 +228,34 @@ class AppCoreInstrumentation : Instrumentation() {
             click("이 조합으로 창조하기")
             await { !session.busy && session.current != null }
             check(session.current!!.getString("source") == "rules")
+            val beforeLeave=session.current!!.toString()
+            fun clickLeave(title: String) {
+                runOnMainSync {
+                    val root=checkNotNull(activity.leaveDialog?.window?.decorView)
+                    walk(root).filterIsInstance<Button>().single { it.text.toString()==title || it.contentDescription?.toString()==title }.performClick()
+                }
+                waitForIdleSync()
+            }
+            click("홈")
+            runOnMainSync {
+                val root=checkNotNull(activity.leaveDialog?.window?.decorView)
+                checkTitle(root,"이 생각을\n저장할까요?")
+                check(walk(root).filterIsInstance<Button>().map { it.text.toString() }.toList().containsAll(listOf("저장하러 가기","저장하지 않고 이동","계속 다듬기")))
+            }
+            clickLeave("계속 다듬기")
+            check(activity.leaveDialog==null && session.current!!.toString()==beforeLeave && session.dirty && session.screen=="result")
+            click("홈"); clickLeave("대화상자 닫기")
+            check(activity.leaveDialog==null && session.current!!.toString()==beforeLeave && session.screen=="result")
+            click("홈"); clickLeave("저장하러 가기")
+            check(activity.leaveDialog==null && session.screen=="save" && session.dirty)
+            runOnMainSync { activity.onBackPressed() }
+            check(session.screen=="result" && session.current!!.toString()==beforeLeave)
+            click("홈"); clickLeave("저장하지 않고 이동")
+            check(session.screen=="home" && session.current==null && !session.dirty)
+            // Resume the same generated fixture so the rest of the regression stays independent.
+            runOnMainSync { session.current=JSONObject(beforeLeave); session.dirty=true; session.screen="result"; session.notifyChanged() }
+            waitForIdleSync()
+            passed.put("styled_unsaved_dialog_stay_close_save_navigation_and_explicit_discard")
             runOnMainSync {
                 checkTitle(activity.window.decorView,session.current!!.optString("title"))
                 check(walk(activity.window.decorView).filterIsInstance<Button>().none { it.text.toString()=="‹ 단어 조합" })
@@ -264,6 +309,16 @@ class AppCoreInstrumentation : Instrumentation() {
             val roundTrip=AppStore.validate(JSONObject(topicLibrary.toString())).getJSONArray("ideas")
             check((0 until roundTrip.length()).any { roundTrip.getJSONObject(it).optString("topic")==directTopic })
             passed.put("native_direct_topic_generate_develop_elaborate_save_backup_reopen")
+            val exportPath=File(targetContext.cacheDir,"core-saf-export.txt")
+            val exportUri=android.net.Uri.fromFile(exportPath)
+            val documentResult=MainActivity::class.java.getDeclaredMethod("onActivityResult",Int::class.javaPrimitiveType,Int::class.javaPrimitiveType,Intent::class.java).apply { isAccessible=true }
+            runOnMainSync { documentResult.invoke(activity,101,android.app.Activity.RESULT_OK,Intent().setData(exportUri)) }
+            val exportedLibrary=LibraryBackup.importText(exportPath.readText(Charsets.UTF_8))
+            check(exportedLibrary.getJSONArray("ideas").length()==2)
+            val countBefore=session.library.getJSONArray("ideas").length()
+            runOnMainSync { documentResult.invoke(activity,102,android.app.Activity.RESULT_OK,Intent().setData(exportUri)) }
+            check(session.screen=="archive" && session.library.getJSONArray("ideas").length()==countBefore)
+            passed.put("native_document_export_import_callbacks_readable_txt_no_duplicate_records")
             // Use an isolated consent store; test acknowledgement is never user consent.
             val fixturePreferenceName="core-cloud-consent-${UUID.randomUUID()}"
             val fixturePreferences=targetContext.getSharedPreferences(fixturePreferenceName,0)

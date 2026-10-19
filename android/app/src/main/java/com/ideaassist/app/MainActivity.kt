@@ -56,6 +56,8 @@ class MainActivity : Activity() {
     private var directionIdeaKey = ""
     internal var topicDialog: Dialog? = null
         private set
+    internal var leaveDialog: Dialog? = null
+        private set
     private var draftProvider = "openai"
     private var draftKey = ""
     private var draftConsent = false
@@ -88,12 +90,14 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         cancelKeyVerification()
         topicDialog?.dismiss()
+        leaveDialog?.dismiss()
         if (session.listener === listener) session.listener = null
         super.onDestroy()
     }
     @Deprecated("Android 13+ uses the registered callback")
     override fun onBackPressed() = back()
     private fun back() {
+        if (leaveDialog?.isShowing == true) { leaveDialog?.cancel(); return }
         if (topicDialog?.isShowing == true) { topicDialog?.cancel(); return }
         if (session.busy) { session.cancel(); return }
         when (session.screen) {
@@ -219,11 +223,43 @@ class MainActivity : Activity() {
     private fun guarded(action: () -> Unit) {
         if (session.busy) { Toast.makeText(this, "작업을 완료하거나 취소한 뒤 이동해 주세요.", Toast.LENGTH_SHORT).show(); return }
         if (!session.dirty || session.current == null) { action(); return }
-        AlertDialog.Builder(this).setTitle("저장하지 않은 생각이 있어요")
-            .setMessage("지금 아이디어를 저장할까요?")
-            .setPositiveButton("저장하고 이어가기") { _, _ -> openSave() }
-            .setNegativeButton("저장하지 않고 이동") { _, _ -> attempt { session.current = null; session.dirty = false; persist(); action() } }
-            .setNeutralButton("계속 다듬기", null).show()
+        showLeaveDialog(action)
+    }
+    private fun showLeaveDialog(action: () -> Unit) {
+        if (leaveDialog?.isShowing == true) return
+        val dialog=Dialog(this)
+        val panel=column().apply { setPadding(dp(24),dp(28),dp(24),dp(16)); background=shape(paper,28) }
+        val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        header.addView(ImageView(this).apply {
+            setImageDrawable(NavIcon(1,green)); background=shape(ApplePalette.tint,18); setPadding(dp(15),dp(15),dp(15),dp(15))
+            importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        },LinearLayout.LayoutParams(dp(56),dp(56)))
+        header.addView(View(this),LinearLayout.LayoutParams(0,1,1f))
+        button(header,"",action={ dialog.cancel() }).apply {
+            contentDescription="대화상자 닫기"; background=touchSurface(Color.TRANSPARENT,12)
+            setCompoundDrawables(NavIcon(10,muted).apply { setBounds(0,0,dp(20),dp(20)) },null,null,null)
+            setPadding(dp(12),dp(12),dp(12),dp(12)); minHeight=dp(44); layoutParams=LinearLayout.LayoutParams(dp(44),dp(44))
+        }
+        panel.addView(header); space(panel,20)
+        panel.addView(titleLabel("이 생각을\n저장할까요?")); space(panel,12)
+        panel.addView(label("아직 보관함에 저장하지 않았어요.\n지금 내용을 저장하거나, 저장하지 않고 이동할 수 있어요.",14f,color=muted)); space(panel,24)
+        button(panel,"저장하러 가기",true) { dialog.dismiss(); openSave() }
+        button(panel,"저장하지 않고 이동") {
+            val previous=session.current
+            try { session.current=null; session.dirty=false; persist() }
+            catch(error: Exception) { session.current=previous; session.dirty=true; throw error }
+            dialog.dismiss(); action()
+        }.apply { setTextColor(Color.rgb(165,40,34)); background=outlined(Color.WHITE,false,16) }
+        textAction(panel,"계속 다듬기") { dialog.cancel() }
+        val scroll=ScrollView(this).apply { addView(panel) }
+        dialog.setContentView(scroll); dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener { if(leaveDialog===dialog) leaveDialog=null }
+        leaveDialog=dialog
+        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND); setDimAmount(.34f) }
+        dialog.show()
+        val width=minOf(resources.displayMetrics.widthPixels-dp(24),dp(420))
+        scroll.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+        dialog.window?.setLayout(width,minOf(scroll.measuredHeight,(resources.displayMetrics.heightPixels*.85f).toInt()))
     }
     private fun modeLabel() = when (session.engine.mode) { "cloud" -> if(session.engine.cloudProvider=="gemini") "Google Gemini" else "OpenAI"; "demo" -> "규칙 시연"; else -> "기기 내 AI · 실험" }
     private fun sourceLabel(value: String) = when (value) {
@@ -628,10 +664,11 @@ class MainActivity : Activity() {
     private fun archiveScreen() {
         heading("모아둔 생각들.", "저장한 아이디어 ${records().size}개 · 이 기기의 앱에 보관")
         val tools = LinearLayout(this).apply { gravity=Gravity.END }
-        val export=textAction(tools, "↓ 백업") { startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "application/json"; putExtra(Intent.EXTRA_TITLE, "아이디어-보관함-백업.json") }, 101) }
+        val export=textAction(tools, "↓ 백업") { startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "text/plain"; putExtra(Intent.EXTRA_TITLE, "아이디어-보관함-백업.txt") }, 101) }
         export.layoutParams=LinearLayout.LayoutParams(-2,-2)
-        val import=textAction(tools, "↑ 가져오기") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "application/json" }, 102) }
+        val import=textAction(tools, "↑ 가져오기") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("text/plain","application/json","application/octet-stream")) }, 102) }
         import.layoutParams=LinearLayout.LayoutParams(-2,-2); body.addView(tools)
+        body.addView(label("TXT로 읽고 다시 가져올 수 있어요. 기존 JSON 백업도 지원해요.",12f,color=muted)); space(height=12)
         val list = column()
         field(body, "", session.search, 100) { session.search = it; fillArchive(list) }.apply { hint="⌕  제목이나 단어로 찾아보기"; contentDescription="아이디어 검색"; background=shape(Color.rgb(229,229,234),14) }
         val filters=listOf("all" to "전체")+folders().map { it.getString("id") to it.getString("name") }
@@ -795,24 +832,17 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         attempt {
             if (requestCode == 101) {
-                val bytes = AppStore.validate(session.library).toString(2).toByteArray(Charsets.UTF_8)
+                val bytes = LibraryBackup.exportText(session.library).toByteArray(Charsets.UTF_8)
                 contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("백업 파일을 열지 못했습니다.")
                 Toast.makeText(this, "백업을 내보냈습니다.", Toast.LENGTH_SHORT).show()
             } else if (requestCode == 102) {
                 val buffer = java.io.ByteArrayOutputStream()
                 contentResolver.openInputStream(uri)?.use { input ->
                     val block = ByteArray(8192)
-                    while (true) { val count = input.read(block); if (count < 0) break; require(buffer.size() + count <= 2_000_000) { "백업은 2MB 이하여야 합니다." }; buffer.write(block, 0, count) }
+                    while (true) { val count = input.read(block); if (count < 0) break; require(buffer.size() + count <= LibraryBackup.MAX_BYTES) { "백업은 10MB 이하여야 합니다." }; buffer.write(block, 0, count) }
                 } ?: error("백업 파일을 읽지 못했습니다.")
-                val incoming = AppStore.validate(JSONObject(buffer.toString("UTF-8")))
-                fun merge(key: String): JSONArray {
-                    val existing = session.library.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
-                    val extra = incoming.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
-                    return JSONArray(existing + extra.filter { other -> existing.none { it.getString("id") == other.getString("id") } })
-                }
-                val next = JSONObject(session.library.toString()).put("ideas", merge("ideas")).put("folders", merge("folders"))
-                val custom = incoming.getJSONArray("customWords").let { a -> (0 until a.length()).map { a.getString(it) } }
-                next.put("customWords", JSONArray((session.customWords() + custom).distinct().take(10)))
+                val incoming = LibraryBackup.importText(buffer.toString("UTF-8"))
+                val next = LibraryBackup.merge(session.library,incoming)
                 session.store.write(next, recover = true); session.library = next; go("archive")
                 Toast.makeText(this, "기존 보관함에 백업을 더했습니다.", Toast.LENGTH_SHORT).show()
             }

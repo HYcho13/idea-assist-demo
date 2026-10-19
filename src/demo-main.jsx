@@ -3,13 +3,15 @@ import { createRoot } from 'react-dom/client'
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Cpu, Download, Folder, Home, Lightbulb, LoaderCircle, LockKeyhole, Plus, RefreshCw, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { categories, roles, directions } from './demo/data.js'
 import { uid, normalize, drawWords, composeIdea, developIdea, elaborateIdea, suggestNames } from './demo/domain.js'
-import { readLibrary, writeLibrary, saveRecord, validateLibrary, nextIdeaName } from './demo/storage.js'
+import { readLibrary, writeLibrary, saveRecord, nextIdeaName } from './demo/storage.js'
 import { checkGPU, loadModel, stopModel, modelGenerate, MODEL_ID } from './demo/ai.js'
 import { cloudGenerate, CLOUD_MODEL } from './demo/cloud-ai.js'
 import { geminiGenerate, GEMINI_MODEL } from './demo/gemini-ai.js'
 import { validateTopic } from './demo/topic.js'
 import EngineSettings from './EngineSettings.jsx'
 import TopicPicker from './TopicPicker.jsx'
+import LeaveDialog from './LeaveDialog.jsx'
+import { exportTextBackup, importTextBackup, mergeBackup, MAX_BACKUP_BYTES } from './demo/backup.js'
 import { readConsent, readCloudProvider } from './demo/cloud-settings.js'
 import { sourceForMode, sourceLabel } from './demo/ai-contract.js'
 import './demo.css'
@@ -95,10 +97,11 @@ function App() {
     return () => { document.removeEventListener('keydown', handleKey); if (trigger?.isConnected) trigger.focus() }
   }, [modal])
   useEffect(() => {
-    const onClose = e => { if (busyRef.current) { e.preventDefault(); e.returnValue = '' } }
+    // Browsers control the appearance/text of the tab-close warning.
+    const onClose = e => { if (busyRef.current || unsaved) { e.preventDefault(); e.returnValue = '' } }
     window.addEventListener('beforeunload', onClose)
     return () => window.removeEventListener('beforeunload', onClose)
-  }, [])
+  }, [unsaved])
 
   function notify(text) { clearTimeout(toastTimer.current); setToast(text); toastTimer.current = setTimeout(() => setToast(''), 3000) }
   function persist(next) {
@@ -212,10 +215,12 @@ function App() {
   }
   function openRecord(record) { setIdea(record); setCategoryId(record.categoryId); setTopic(record.topic || ''); setTopicInput(record.topic || ''); setWords(record.used_words); setCondition(record.condition || ''); setLocked([]); setPrior(null); setTab('archive'); navigate('result') }
   function exportLibrary() {
+    try {
     const snapshot = idea && !library.ideas.some(x => x.id === idea.id) ? saveRecord(library, idea, { name: idea.name || nextIdeaName(library.ideas), folderId: library.folders[0].id }) : library
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
+    const blob = new Blob([exportTextBackup(snapshot)], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob), link = document.createElement('a')
-    link.href = url; link.download = '아이디어-보관함-백업.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+    link.href = url; link.download = '아이디어-보관함-백업.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (e) { setError(e.message || '백업 파일을 만들지 못했어요.') }
   }
   async function copyResult() {
     try {
@@ -227,10 +232,9 @@ function App() {
     const file = event.target.files?.[0]; event.target.value = ''
     if (!file) return
     try {
-      if (file.size > 2_000_000) throw new Error('백업은 2MB 이하의 JSON 파일로 골라 주세요.')
-      const incoming = validateLibrary(JSON.parse(await file.text()))
-      const folders = [...library.folders, ...incoming.folders.filter(f => !library.folders.some(x => x.id === f.id))]
-      const next = validateLibrary({ version: 1, ideas: [...library.ideas, ...incoming.ideas.filter(i => !library.ideas.some(x => x.id === i.id))], folders, customWords: [...new Set([...library.customWords, ...incoming.customWords])].slice(0, 10), draft: library.draft })
+      if (file.size > MAX_BACKUP_BYTES) throw new Error('백업은 10MB 이하의 TXT 또는 기존 JSON 파일로 골라 주세요.')
+      const incoming = importTextBackup(await file.text())
+      const next = mergeBackup(library, incoming)
       if (persist(next)) notify('기존 내용에 백업을 더했어요.')
     } catch (e) { setError(e.message || '백업 파일을 읽지 못했어요.') }
   }
@@ -270,7 +274,7 @@ function App() {
         {screen === 'elaborate' && idea?.elaboration && <section><Back onClick={() => navigate('result')}>결과</Back><SourceLabel idea={{ source: idea.elaborationSource, model: idea.elaborationModel }} /><h2>아이디어를<br />한 걸음 더.</h2><p className="lead">{idea.title}</p><WordTags words={idea.used_words} />{[['누구를 위한 아이디어인가', idea.elaboration.target_user], ['어떤 불편을 해결하나', idea.elaboration.problem], ['이 조합의 가치', idea.elaboration.value]].map(([label, text]) => <Detail key={label} label={label}>{text}</Detail>)}<Detail label="핵심 기능 3개"><ul>{idea.elaboration.core_features.map((t, i) => <li key={i}>{t}</li>)}</ul></Detail><Detail label="첫 프로토타입">{idea.elaboration.first_prototype}</Detail><Detail label="먼저 확인할 위험"><ul>{idea.elaboration.risks.map((t, i) => <li key={i}>{t}</li>)}</ul></Detail><p className="hint">아이디어 초안이에요. 실제 필요성과 실행 조건은 직접 확인해 주세요.</p><button className="primary" onClick={openSave}><Folder size={17} />구체화한 아이디어 저장하기</button></section>}
         {screen === 'save' && idea && <section><Back onClick={() => navigate('result')}>결과</Back><h2>생각을<br />담아두세요.</h2><p className="muted">이름과 폴더를 고르면 이 브라우저에 저장돼요.</p><label className="field">아이디어 이름<input value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="아이디어 이름" /></label><span className="section-label">이름 조합 제안 <span>간편 규칙 방식</span></span><div className="tone-options">{[['base', '담백하게'], ['cute', '귀엽게'], ['hip', '힙하게']].map(([id, label]) => <button key={id} className="chip" onClick={() => setNameOptions(suggestNames(idea, id))}>{label}</button>)}</div>{nameOptions.length > 0 && <div className="name-options">{nameOptions.map(n => <button key={n} className="chip" onClick={() => setName(n)}>{n}</button>)}</div>}<span className="section-label">저장 폴더</span><div className="folder-options">{library.folders.map(f => <button className={folderId === f.id ? 'selected' : ''} key={f.id} onClick={() => setFolderId(f.id)}><Folder size={16} /><span>{f.name}</span>{folderId === f.id && <Check size={16} />}</button>)}</div><form className="input-row folder-input" onSubmit={e => { e.preventDefault(); newFolder() }}><input aria-label="새 폴더 이름" placeholder="새 폴더 이름" maxLength={30} value={folderName} onChange={e => setFolderName(e.target.value)} /><button type="submit" className="small-action"><Plus size={16} />폴더</button></form><button className="primary" onClick={save}><Check size={18} />저장하기</button></section>}
         {screen === 'saved' && <section className="success-page"><div className="success-icon"><Check size={38} /></div><span className="eyebrow">A SPARK TO KEEP</span><h2>생각 하나를<br />담았어요.</h2><p className="muted">{idea?.name}<br />새로고침해도 이 브라우저에서 다시 볼 수 있어요.</p><button className="primary" onClick={() => { setFilterFolder(idea?.folderId || 'all'); navigate('archive') }}><Folder size={17} />보관함에서 확인하기</button><button className="secondary" onClick={quickStart}><Plus size={17} />새 아이디어 만들기</button></section>}
-        {screen === 'archive' && <section><span className="eyebrow">YOUR IDEA COLLECTION</span><h2>모아둔 생각들<span className="green-dot">.</span></h2><p className="muted">저장한 아이디어 {library.ideas.length}개 · 이 브라우저에 보관</p><div className="archive-tools"><button className="text-button" onClick={exportLibrary}><Download size={14} />백업</button><label className="text-button import-label"><Upload size={14} />가져오기<input type="file" accept="application/json,.json" onChange={importLibrary} /></label></div><label className="search"><Search size={17} /><input aria-label="아이디어 검색" placeholder="제목이나 단어로 찾아보기" value={search} onChange={e => setSearch(e.target.value)} /></label><div className="folder-filter"><button className={`chip ${filterFolder === 'all' ? 'active' : ''}`} onClick={() => setFilterFolder('all')}>전체</button>{library.folders.map(f => <button className={`chip ${filterFolder === f.id ? 'active' : ''}`} key={f.id} onClick={() => setFilterFolder(f.id)}>{f.name}</button>)}</div><div className="archive-list">{displayed.length ? displayed.map(record => <article className="saved-card" key={record.id}><button className="saved-open" onClick={() => openRecord(record)}><span className="saved-meta">{record.category} · {new Date(record.savedAt).toLocaleDateString('ko-KR')}</span><h3>{record.name}</h3><p>{record.one_liner}</p><WordTags words={record.used_words} /></button><button className="icon-button remove" aria-label={`${record.name} 삭제`} onClick={() => setModal({ type: 'delete', record })}><Trash2 size={16} /></button><span className="source-tag">{sourceLabel(record.source)}</span></article>) : <Empty title={library.ideas.length ? '조건에 맞는 아이디어가 없어요' : '아직 담아둔 생각이 없어요'} text={library.ideas.length ? '검색과 폴더 선택을 바꿔보세요.' : '아래 + 를 눌러 첫 아이디어를 만들어보세요.'} action={library.ideas.length ? () => { setSearch(''); setFilterFolder('all') } : quickStart} actionLabel={library.ideas.length ? '필터 초기화' : '주제 선택하고 만들기'} />}</div></section>}
+        {screen === 'archive' && <section><span className="eyebrow">YOUR IDEA COLLECTION</span><h2>모아둔 생각들<span className="green-dot">.</span></h2><p className="muted">저장한 아이디어 {library.ideas.length}개 · 이 브라우저에 보관</p><div className="archive-tools"><button className="text-button" onClick={exportLibrary}><Download size={14} />백업</button><label className="text-button import-label"><Upload size={14} />가져오기<input type="file" aria-label="TXT 또는 JSON 백업 가져오기" accept="text/plain,.txt,application/json,.json" onChange={importLibrary} /></label></div><p className="backup-help">TXT로 읽고 다시 가져올 수 있어요. 기존 JSON 백업도 지원해요.</p><label className="search"><Search size={17} /><input aria-label="아이디어 검색" placeholder="제목이나 단어로 찾아보기" value={search} onChange={e => setSearch(e.target.value)} /></label><div className="folder-filter"><button className={`chip ${filterFolder === 'all' ? 'active' : ''}`} onClick={() => setFilterFolder('all')}>전체</button>{library.folders.map(f => <button className={`chip ${filterFolder === f.id ? 'active' : ''}`} key={f.id} onClick={() => setFilterFolder(f.id)}>{f.name}</button>)}</div><div className="archive-list">{displayed.length ? displayed.map(record => <article className="saved-card" key={record.id}><button className="saved-open" onClick={() => openRecord(record)}><span className="saved-meta">{record.category} · {new Date(record.savedAt).toLocaleDateString('ko-KR')}</span><h3>{record.name}</h3><p>{record.one_liner}</p><WordTags words={record.used_words} /></button><button className="icon-button remove" aria-label={`${record.name} 삭제`} onClick={() => setModal({ type: 'delete', record })}><Trash2 size={16} /></button><span className="source-tag">{sourceLabel(record.source)}</span></article>) : <Empty title={library.ideas.length ? '조건에 맞는 아이디어가 없어요' : '아직 담아둔 생각이 없어요'} text={library.ideas.length ? '검색과 폴더 선택을 바꿔보세요.' : '아래 + 를 눌러 첫 아이디어를 만들어보세요.'} action={library.ideas.length ? () => { setSearch(''); setFilterFolder('all') } : quickStart} actionLabel={library.ideas.length ? '필터 초기화' : '주제 선택하고 만들기'} />}</div></section>}
         {idea && ['result', 'elaborate'].includes(screen) && <button className="text-button" onClick={copyResult}>현재 결과 복사하기</button>}
         {storageProblem && <div className="error-box" role="alert">{storageProblem}<button className="text-button" onClick={exportLibrary}>현재 내용 백업</button></div>}
         {error && <div className="error-box" role="alert"><b>한 번 더 확인해 주세요</b><p>{error}</p>{retryTask && screen !== 'save' && <button className="secondary" onClick={() => runGeneration(retryTask.type, retryTask.overrides)}>다시 시도</button>}</div>}
@@ -278,7 +282,25 @@ function App() {
       <nav className="bottom-tabs" aria-label="하단 메뉴"><button aria-label="홈 탭" aria-current={screen === 'home' ? 'page' : undefined} className={tab === 'home' && !['words','result','custom','loading','save','elaborate'].includes(screen) ? 'active' : ''} onClick={() => guarded(() => { setTab('home'); navigate('home') })}><Home size={22} /><span>홈</span></button><button className="plus-tab" aria-label="새 아이디어 주제 선택" disabled={busy} onClick={quickStart}><Plus size={30} /><span>새 아이디어</span></button><button aria-label="보관함 탭" aria-current={screen === 'archive' ? 'page' : undefined} className={tab === 'archive' ? 'active' : ''} onClick={() => guarded(() => { setTab('archive'); setFilterFolder('all'); navigate('archive') })}><span className="folder-icon"><Folder size={22} />{library.ideas.length > 0 && <small>{library.ideas.length}</small>}</span><span>보관함</span></button></nav>
     </main>
     {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
-    {modal && <div className="modal-backdrop"><section className="modal" style={modal.type === 'engine' ? { maxHeight: '85dvh', overflowY: 'auto' } : undefined} role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="icon-button close-modal" aria-label="대화상자 닫기" disabled={modelState === 'loading'} onClick={() => setModal(null)}><X size={20} /></button>{modal.type === 'leave' ? <><h2 id="modal-title">저장하지 않은 생각이 있어요.</h2><p className="muted">지금 내용을 저장하거나 다음으로 이동할 수 있어요.</p><button className="primary" onClick={() => { setModal(null); openSave() }}>저장하고 이어가기</button><button className="secondary" onClick={() => { const action = modal.action; setModal(null); action() }}>저장하지 않고 이동</button><button className="text-button" onClick={() => setModal(null)}>계속 다듬기</button></> : modal.type === 'delete' ? <><h2 id="modal-title">보관함에서 지울까요?</h2><p className="muted">{modal.record.name}</p><button className="primary" onClick={() => { const record = modal.record; if (persist({ ...library, ideas: library.ideas.filter(i => i.id !== record.id) })) { setModal(null); notify('삭제했어요.'); if (idea?.id === record.id) setIdea(null) } }}>삭제하기</button><button className="secondary" onClick={() => setModal(null)}>취소</button></> : modal.type === 'topic' ? <TopicPicker onGenerate={generateFromTopic} onCancel={() => setModal(null)} /> : <EngineSettings mode={mode} setMode={setMode} apiKey={apiKey} setApiKey={setApiKey} provider={provider} changeProvider={changeProvider} gpu={gpu} modelState={modelState} modelProgress={modelProgress} initAI={initAI} cancelPreparation={() => { preparation.current++; stopModel(); setModelState('idle'); setModelProgress({ progress: 0, text: '' }) }} close={() => setModal(null)} />}</section></div>}
+    {modal && <div className="modal-backdrop">
+      <section className={`modal${modal.type === 'leave' ? ' leave-modal' : ''}`}
+        style={modal.type === 'engine' ? { maxHeight: '85dvh', overflowY: 'auto' } : undefined}
+        role="dialog" aria-modal="true" aria-labelledby="modal-title"
+        aria-describedby={modal.type === 'leave' ? 'leave-description' : undefined}>
+        <button className="icon-button close-modal" aria-label="대화상자 닫기" disabled={modelState === 'loading'} onClick={() => setModal(null)}><X size={20} /></button>
+        {modal.type === 'leave' ? <LeaveDialog
+          onSave={() => { setModal(null); openSave() }}
+          onLeave={() => { const action = modal.action; setModal(null); action() }}
+          onStay={() => setModal(null)} />
+        : modal.type === 'delete' ? <>
+          <h2 id="modal-title">보관함에서 지울까요?</h2><p className="muted">{modal.record.name}</p>
+          <button className="primary" onClick={() => { const record = modal.record; if (persist({ ...library, ideas: library.ideas.filter(i => i.id !== record.id) })) { setModal(null); notify('삭제했어요.'); if (idea?.id === record.id) setIdea(null) } }}>삭제하기</button>
+          <button className="secondary" onClick={() => setModal(null)}>취소</button>
+        </> : modal.type === 'topic' ? <TopicPicker onGenerate={generateFromTopic} onCancel={() => setModal(null)} />
+        : <EngineSettings mode={mode} setMode={setMode} apiKey={apiKey} setApiKey={setApiKey} provider={provider} changeProvider={changeProvider} gpu={gpu} modelState={modelState} modelProgress={modelProgress} initAI={initAI}
+          cancelPreparation={() => { preparation.current++; stopModel(); setModelState('idle'); setModelProgress({ progress: 0, text: '' }) }} close={() => setModal(null)} />}
+      </section>
+    </div>}
   </div>
 }
 
