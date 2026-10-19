@@ -119,27 +119,26 @@ function App() {
     if (unsaved) setModal({ type: 'leave', action: () => { setIdea(null); action() } })
     else action()
   }
-  function start(id, quick = false, inputTopic = '') {
+  function start(id, inputTopic = '') {
     generationOrigin.current = 'home'
     const combo = drawWords(id)
     setCategoryId(id); setTopic(inputTopic); setWords(combo.words); setCondition(combo.condition); setLocked([])
     setIdea(null); setPrior(null); setNameOptions([]); setVariant(0); setTab('home')
     keepDraft(combo.words, id, combo.condition, inputTopic)
-    if (quick) runGeneration('generate', { id, ...combo, topic: inputTopic, variant: 0, fresh: true })
-    else navigate('words')
+    navigate('words')
   }
   function quickStart(event) {
     if (busyRef.current) return notify('완료하거나 취소한 뒤 주제를 선택할 수 있어요.')
     topicTrigger.current = event?.currentTarget || document.activeElement
     setModal({ type: 'topic' })
   }
-  function generateFromTopic(id, value) {
+  function selectTopic(id, value) {
     setModal(null)
-    guarded(() => start(id, true, value))
+    guarded(() => start(id, value))
   }
   function startTopic(event) {
     event.preventDefault()
-    try { const value = validateTopic(topicInput); guarded(() => start('custom', false, value)) } catch(e) { setError(e.message) }
+    try { const value = validateTopic(topicInput); guarded(() => start('custom', value)) } catch(e) { setError(e.message) }
   }
   function reroll() {
     const combo = drawWords(categoryId, { current: words, locked })
@@ -156,11 +155,11 @@ function App() {
     if (busyRef.current) return
     const token = ++operation.current
     const args = { categoryId: overrides.id || categoryId, topic: overrides.topic ?? topic, words: overrides.words || words, condition: overrides.condition || condition, variant: overrides.variant ?? variant, direction: overrides.direction }
-    const current = overrides.fresh ? null : idea
+    const current = idea
     const requestMode = mode
     const controller = new AbortController()
     generationController.current = controller
-    const from = overrides.fresh ? 'words' : screen
+    const from = screen
     generationOrigin.current = from
     setRetryTask({ type, overrides }); setError(''); setBusy(true); busyRef.current = true; navigate('loading')
     try {
@@ -265,7 +264,7 @@ function App() {
           <div className="section-label">또는 추천 분야 선택</div>
           <div className="categories">{categories.map(c => <button key={c.id} className={`category ${categoryId === c.id ? 'selected' : ''}`} onClick={() => setCategoryId(c.id)} aria-pressed={categoryId === c.id}><span className={`category-emoji ${c.accent}`}>{c.icon}</span><span><b>{c.name}</b><small>{c.description}</small></span>{categoryId === c.id ? <Check size={19} /> : <ChevronRight size={19} />}</button>)}</div>
           <button className="primary" disabled={!categories.some(c => c.id === categoryId)} onClick={() => guarded(() => start(categoryId))}>선택하고 시작하기<ArrowRight size={18} /></button>
-          <p className="hint"><Plus size={13} /> 아래 + 를 눌러 주제를 고르고 바로 만들어요.</p>{words.length === 3 && <button className="text-button resume" onClick={() => navigate('words')}>이전에 고른 단어 이어보기 <ArrowRight size={14} /></button>}
+          <p className="hint"><Plus size={13} /> 아래 + 를 눌러 주제를 고르고 단어를 조합해요.</p>{words.length === 3 && <button className="text-button resume" onClick={() => navigate('words')}>이전에 고른 단어 이어보기 <ArrowRight size={14} /></button>}
         </section>}
         {screen === 'words' && <section><div className="eyebrow">{category?.name}</div><h2 className="headline-41">뜻밖의 세 단어를<br />조합해 보세요.</h2><p className="muted">마음에 드는 단어는 최대 2개까지 고정해요.</p><div className="word-grid">{words.map((w, i) => <button key={`${i}-${w}`} className={`word ${locked.includes(i) ? 'locked' : ''}`} aria-pressed={locked.includes(i)} aria-label={`${roles[i]} ${w} ${locked.includes(i) ? '고정 해제' : '고정'}`} onClick={() => toggleLock(i)}><small>{roles[i]}</small><b>{w}</b><span>{locked.includes(i) ? <><LockKeyhole size={12} /> 고정됨</> : '터치해서 고정'}</span></button>)}</div><div className="condition"><Lightbulb size={16} /><span><small>이번 조합의 조건</small>{condition}</span></div><button className="secondary" onClick={reroll}><RefreshCw size={17} />다시 뽑기</button><button className="text-button" onClick={() => { setSelectedCustom([]); navigate('custom') }}><Plus size={15} />내 단어 추가하기</button><div className="section-space" /><button className="primary" onClick={() => runGeneration('generate')}><Sparkles size={18} />이 조합으로 창조하기</button><ModeCaption mode={mode} /></section>}
         {screen === 'custom' && <section><Back onClick={() => navigate('words')}>단어 조합</Back><h2>내 단어를<br />더해 보세요.</h2><p className="muted">1~2개를 고르면 나머지는 무작위로 채워요.</p><form className="input-row" onSubmit={e => { e.preventDefault(); addCustom() }}><input aria-label="추가할 단어" placeholder="예: 커피" maxLength={12} value={customInput} onChange={e => setCustomInput(e.target.value)} /><button className="small-action" type="submit"><Plus size={17} />추가</button></form><div className="section-label">내 단어 {library.customWords.length}/10 <span>{selectedCustom.length}/2 선택</span></div><div className="custom-list">{library.customWords.length ? library.customWords.map(w => <div className="custom-row" key={w}><button aria-pressed={selectedCustom.includes(w)} onClick={() => { if (selectedCustom.includes(w)) setSelectedCustom(selectedCustom.filter(x => x !== w)); else if (selectedCustom.length < 2) setSelectedCustom([...selectedCustom, w]); else notify('최대 2개까지 선택할 수 있어요.') }}><span className={`check-box ${selectedCustom.includes(w) ? 'checked' : ''}`}>{selectedCustom.includes(w) && <Check size={13} />}</span>{w}</button><button className="icon-button" aria-label={`${w} 내 단어 삭제`} onClick={() => { if (persist({ ...library, customWords: library.customWords.filter(x => x !== w) })) setSelectedCustom(selectedCustom.filter(x => x !== w)) }}><X size={16} /></button></div>) : <Empty title="아직 추가한 단어가 없어요" text="분야와 관련된 단어를 하나 적어보세요." />}</div><div className="section-space" /><button className="primary" disabled={!selectedCustom.length} onClick={applyCustom}>선택한 단어 적용하기<Check size={17} /></button></section>}
@@ -296,7 +295,7 @@ function App() {
           <h2 id="modal-title">보관함에서 지울까요?</h2><p className="muted">{modal.record.name}</p>
           <button className="primary" onClick={() => { const record = modal.record; if (persist({ ...library, ideas: library.ideas.filter(i => i.id !== record.id) })) { setModal(null); notify('삭제했어요.'); if (idea?.id === record.id) setIdea(null) } }}>삭제하기</button>
           <button className="secondary" onClick={() => setModal(null)}>취소</button>
-        </> : modal.type === 'topic' ? <TopicPicker onGenerate={generateFromTopic} onCancel={() => setModal(null)} />
+        </> : modal.type === 'topic' ? <TopicPicker onSelect={selectTopic} onCancel={() => setModal(null)} />
         : <EngineSettings mode={mode} setMode={setMode} apiKey={apiKey} setApiKey={setApiKey} provider={provider} changeProvider={changeProvider} gpu={gpu} modelState={modelState} modelProgress={modelProgress} initAI={initAI}
           cancelPreparation={() => { preparation.current++; stopModel(); setModelState('idle'); setModelProgress({ progress: 0, text: '' }) }} close={() => setModal(null)} />}
       </section>

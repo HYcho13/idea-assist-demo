@@ -362,7 +362,7 @@ class MainActivity : Activity() {
         val topicBox=column().apply { background=shape(Color.WHITE,20); setPadding(dp(18),dp(18),dp(18),dp(18)) }
         field(topicBox,"나만의 주제·분야",topicInput,80) { topicInput=it }.apply { hint="예: 반려동물과 함께하는 여행"; background=outlined(paper,false,12) }
         topicBox.addView(label("공통 단어 3개를 뽑고, 입력한 주제 안에서 연결해요. 단어도 바꿀 수 있어요.",12f,color=muted)); space(topicBox)
-        button(topicBox,"입력한 주제로 시작하기",true) { val value=DemoDomain.topic(topicInput); guarded { start("custom",false,value) } }
+        button(topicBox,"입력한 주제로 시작하기",true) { val value=DemoDomain.topic(topicInput); guarded { start("custom",value) } }
         body.addView(topicBox); space(height=24); body.addView(label("또는 추천 분야 선택",13f,true,muted)); space()
         val descriptions = listOf("새로운 메뉴와 맛있는 경험", "일상을 바꾸는 앱과 서비스", "우리 주변 문제를 새롭게 해결")
         DemoDomain.categoryIds.forEachIndexed { index, id ->
@@ -381,16 +381,16 @@ class MainActivity : Activity() {
                 contentDescription = DemoDomain.categoryNames[index] + if (selected) " 선택됨" else ""
             }
         }
-        space(height = 24); button(body, "선택하고 시작하기", true) { guarded { start(session.categoryId, false) } }.isEnabled = session.categoryId in DemoDomain.categoryIds
-        body.addView(label("+  아래 +를 눌러 주제를 고르고 바로 만들어요.", 12f, color = muted).apply { gravity = Gravity.CENTER })
+        space(height = 24); button(body, "선택하고 시작하기", true) { guarded { start(session.categoryId) } }.isEnabled = session.categoryId in DemoDomain.categoryIds
+        body.addView(label("+  아래 +를 눌러 주제를 고르고 단어를 조합해요.", 12f, color = muted).apply { gravity = Gravity.CENTER })
         if (session.words.size == 3) { space(); textAction(body, "이전에 고른 단어 이어보기 →") { go("words") } }
     }
-    private fun start(id: String, quick: Boolean, topic: String = "") {
+    private fun start(id: String, topic: String = "") {
         session.categoryId = id; session.topic = topic; session.locks.clear()
         session.words = DemoDomain.draw(id, emptyList(), emptySet(), emptyList(), false)
         session.condition = listOf("기존 재료와 도구로 작게 시작하기", "일주일 안에 작은 시제품 시험하기", "처음 보는 사람도 쉽게 이해할 수 있게 만들기", "한 사람이 혼자서도 사용할 수 있게 만들기").random()
         session.current = null; session.prior = null; session.dirty = false; session.screen = "words"
-        persist(); if (quick) generate() else render()
+        persist(); render()
     }
     private fun showTopicPicker() {
         if (session.busy || topicDialog?.isShowing == true) return
@@ -400,7 +400,7 @@ class MainActivity : Activity() {
         var draft=""
         fun choose(id: String, topic: String="") {
             dialog.dismiss()
-            guarded { start(id,true,topic) }
+            guarded { start(id,topic) }
         }
         lateinit var showChoices: () -> Unit
         fun iconButton(parent: LinearLayout, kind: Int, description: String, action: () -> Unit): Button = button(parent,"",action=action).apply {
@@ -433,7 +433,7 @@ class MainActivity : Activity() {
             }
             panel.addView(label("1~80자로 적어주세요. 입력한 주제 안에서 세 단어를 연결해요.",13f,color=muted)); space(panel,8)
             panel.addView(counter); space(panel,12); panel.addView(failure)
-            val generate=button(panel,"이 주제로 생성하기",true) {
+            val generate=button(panel,"단어 조합으로 이동",true) {
                 try { choose("custom",DemoDomain.topic(draft)) }
                 catch (error: IllegalArgumentException) { failure.text="주제·분야를 1~80자로 입력해 주세요."; failure.visibility=View.VISIBLE }
             }.apply { isEnabled=draft.isNotBlank() }
@@ -455,7 +455,7 @@ class MainActivity : Activity() {
             header.addView(titleLabel("어떤 주제로 만들까요?"),LinearLayout.LayoutParams(0,-2,1f))
             iconButton(header,10,"대화상자 닫기") { dialog.cancel() }
             panel.addView(header); space(panel,12)
-            panel.addView(label("분야를 고르면 세 단어를 뽑아 바로 생성해요.",14f,color=muted)); space(panel,20)
+            panel.addView(label("주제를 고른 뒤 단어 조합을 확인하고 아이디어를 만들어요.",14f,color=muted)); space(panel,20)
             val descriptions=listOf("새로운 메뉴와 맛있는 경험","일상을 바꾸는 앱과 서비스","우리 주변 문제를 새롭게 해결","원하는 주제·분야를 자유롭게 작성")
             fun choice(index: Int,title: String, action: () -> Unit) {
                 button(panel,title,action=action).apply {

@@ -21,6 +21,7 @@ import java.util.UUID
 class AppCoreInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
     override fun onStart() {
+        sendStatus(0,Bundle().apply { putString("stream","\nNATIVE_CORE_START\n") })
         val passed = JSONArray()
         fun checkTitle(root: View, text: String) {
             val title=walk(root).filterIsInstance<android.widget.TextView>().single { it.text.toString()==text }
@@ -143,7 +144,9 @@ class AppCoreInstrumentation : Instrumentation() {
             isolatedSession=session; originalStore=session.store; originalLibrary=session.library
             runOnMainSync { session.store=store; session.library=AppStore.fresh() }
             runOnMainSync { session.engine.mode = "demo"; session.current = null; session.dirty = false; session.screen = "home"; session.categoryId="food"; session.topic="" }
-            val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            sendStatus(0,Bundle().apply { putString("stream","\nNATIVE_CORE_UI_START\n") })
+            val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+            sendStatus(0,Bundle().apply { putString("stream","\nNATIVE_CORE_UI_READY\n") })
             runOnMainSync {
                 val nativeButtons=walk(activity.window.decorView).filterIsInstance<Button>().toList()
                 check(nativeButtons.any { it.text.contains("새로운 메뉴와 맛있는 경험") && it.elevation == 0f })
@@ -180,7 +183,7 @@ class AppCoreInstrumentation : Instrumentation() {
             runOnMainSync {
                 val field=walk(activity.topicDialog!!.window!!.decorView).filterIsInstance<EditText>().single()
                 checkTitle(activity.topicDialog!!.window!!.decorView,"나만의 주제를 적어주세요")
-                val generate=dialogButtons().single { it.text.toString()=="이 주제로 생성하기" }
+                val generate=dialogButtons().single { it.text.toString()=="단어 조합으로 이동" }
                 check(!generate.isEnabled)
                 field.setText("   "); check(!generate.isEnabled)
                 field.setText("반려동물과 함께하는 여행"); check(generate.isEnabled)
@@ -191,23 +194,38 @@ class AppCoreInstrumentation : Instrumentation() {
             clickTopic("취소")
             check(activity.topicDialog==null && session.screen=="home" && session.categoryId==initialCategory && session.words==initialWords)
             for(index in 0..3) {
+                // A missing cloud key makes any accidental automatic generation fail visibly.
+                runOnMainSync { session.engine.mode="cloud" }
                 click("새 아이디어 주제 선택")
                 if(index<3) clickTopic(DemoDomain.categoryNames[index]) else {
                     clickTopic("직접 입력")
                     runOnMainSync { walk(activity.topicDialog!!.window!!.decorView).filterIsInstance<EditText>().single().setText("  반려동물과 함께하는 여행  ") }
-                    clickTopic("이 주제로 생성하기")
+                    clickTopic("단어 조합으로 이동")
                 }
-                await { !session.busy && session.current!=null }
-                check(activity.topicDialog==null && session.screen=="result")
+                check(activity.topicDialog==null && session.screen=="words")
+                check(!session.busy && session.current==null && session.error.isBlank() && !session.dirty)
                 check(session.categoryId==if(index<3) DemoDomain.categoryIds[index] else "custom")
                 if(index==3) check(session.topic=="반려동물과 함께하는 여행")
+                runOnMainSync {
+                    val locked=session.words[0]
+                    walk(activity.window.decorView).first { it.contentDescription?.toString()=="$locked 고정" }.performClick()
+                }
+                val lockedWord=session.words[0]
+                click("다시 뽑기")
+                check(session.words[0]==lockedWord && session.current==null && !session.busy)
+                val chosenWords=session.words.toList()
+                runOnMainSync { session.engine.mode="demo" }
+                click("이 조합으로 창조하기")
+                await { !session.busy && session.current!=null }
+                check(session.screen=="result")
+                check((0..2).map { session.current!!.getJSONArray("used_words").getString(it) }==chosenWords)
                 val retained=session.current!!.toString()
                 click("새 아이디어 주제 선택"); clickTopic("취소")
                 check(session.current!!.toString()==retained && session.dirty)
                 runOnMainSync { session.current=null; session.dirty=false; session.categoryId="food"; session.topic="" }
                 click("홈")
             }
-            passed.put("native_plus_four_topics_custom_input_cancel_preserves_state_and_selected_generation")
+            passed.put("native_plus_four_topics_words_first_no_cloud_call_lock_reroll_then_explicit_generation_cancel_preserves_state")
             click("선택하고 시작하기")
             runOnMainSync {
                 val title=walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().single { it.text.toString().startsWith("뜻밖의 세 단어를\n") }
