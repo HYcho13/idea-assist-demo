@@ -666,9 +666,7 @@ class MainActivity : Activity() {
         val tools = LinearLayout(this).apply { gravity=Gravity.END }
         val export=textAction(tools, "↓ 백업") { startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "text/plain"; putExtra(Intent.EXTRA_TITLE, "아이디어-보관함-백업.txt") }, 101) }
         export.layoutParams=LinearLayout.LayoutParams(-2,-2)
-        val import=textAction(tools, "↑ 가져오기") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("text/plain","application/json","application/octet-stream")) }, 102) }
-        import.layoutParams=LinearLayout.LayoutParams(-2,-2); body.addView(tools)
-        body.addView(label("TXT로 읽고 다시 가져올 수 있어요. 기존 JSON 백업도 지원해요.",12f,color=muted)); space(height=12)
+        body.addView(tools)
         val list = column()
         field(body, "", session.search, 100) { session.search = it; fillArchive(list) }.apply { hint="⌕  제목이나 단어로 찾아보기"; contentDescription="아이디어 검색"; background=shape(Color.rgb(229,229,234),14) }
         val filters=listOf("all" to "전체")+folders().map { it.getString("id") to it.getString("name") }
@@ -828,24 +826,12 @@ class MainActivity : Activity() {
     @Deprecated("SAF result dispatch for minSdk 26 without an AndroidX dependency")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
+        if (requestCode != 101 || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         attempt {
-            if (requestCode == 101) {
-                val bytes = LibraryBackup.exportText(session.library).toByteArray(Charsets.UTF_8)
-                contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("백업 파일을 열지 못했습니다.")
-                Toast.makeText(this, "백업을 내보냈습니다.", Toast.LENGTH_SHORT).show()
-            } else if (requestCode == 102) {
-                val buffer = java.io.ByteArrayOutputStream()
-                contentResolver.openInputStream(uri)?.use { input ->
-                    val block = ByteArray(8192)
-                    while (true) { val count = input.read(block); if (count < 0) break; require(buffer.size() + count <= LibraryBackup.MAX_BYTES) { "백업은 10MB 이하여야 합니다." }; buffer.write(block, 0, count) }
-                } ?: error("백업 파일을 읽지 못했습니다.")
-                val incoming = LibraryBackup.importText(buffer.toString("UTF-8"))
-                val next = LibraryBackup.merge(session.library,incoming)
-                session.store.write(next, recover = true); session.library = next; go("archive")
-                Toast.makeText(this, "기존 보관함에 백업을 더했습니다.", Toast.LENGTH_SHORT).show()
-            }
+            val bytes = LibraryBackup.exportText(session.library).toByteArray(Charsets.UTF_8)
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("백업 파일을 열지 못했습니다.")
+            Toast.makeText(this, "백업을 내보냈습니다.", Toast.LENGTH_SHORT).show()
         }
     }
     private class MarkIcon(private val glyph: String, private val color: Int) : Drawable() {

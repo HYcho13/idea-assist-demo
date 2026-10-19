@@ -6,8 +6,6 @@ import org.json.JSONObject
 /** Same UTF-8 TXT interchange format as src/demo/backup.js; no settings or draft. */
 object LibraryBackup {
     const val MAX_BYTES = 10_000_000
-    const val START = "[IDEA-ASSIST-BACKUP-V1 BEGIN]"
-    const val END = "[IDEA-ASSIST-BACKUP-V1 END]"
     private fun pick(value: JSONObject, keys: List<String>) = JSONObject().apply {
         keys.forEach { if(value.has(it)) put(it,value.get(it)) }
     }
@@ -35,9 +33,7 @@ object LibraryBackup {
         val ideas=data.getJSONArray("ideas")
         val folders=data.getJSONArray("folders")
         val names=(0 until folders.length()).associate { folders.getJSONObject(it).let { f -> f.getString("id") to f.getString("name") } }
-        val lines=mutableListOf("아이디어 보조 · 보관함 백업","형식: 읽기 가능한 TXT + 가져오기용 복원 데이터",
-            "메모장으로 읽을 수 있어요. 가져오려면 파일 끝의 복원 데이터를 지우거나 수정하지 마세요.",
-            "위쪽 읽기용 본문을 수정해도 가져오는 내용은 바뀌지 않아요.",
+        val lines=mutableListOf("아이디어 보조 · 보관함 내보내기",
             "저장한 아이디어: ${ideas.length()}개","폴더: ${names.values.joinToString(" · ")}",
             "내 단어: ${strings(data.getJSONArray("customWords")).joinToString(" · ").ifEmpty { "없음" }}","")
         repeat(ideas.length()) { index ->
@@ -66,41 +62,8 @@ object LibraryBackup {
             }
             lines.add("")
         }
-        lines.addAll(listOf("=".repeat(40),"아래는 앱에서 다시 가져오기 위한 복원 데이터입니다. 그대로 보관해 주세요.",START,data.toString(2),END,""))
         val result="\uFEFF"+lines.joinToString("\r\n")
         require(result.toByteArray(Charsets.UTF_8).size<=MAX_BYTES) { "백업은 10MB 이하여야 합니다. 보관함 크기를 확인해 주세요." }
         return result
-    }
-    fun importText(text: String): JSONObject {
-        require(text.toByteArray(Charsets.UTF_8).size<=MAX_BYTES) { "백업은 10MB 이하의 TXT 또는 기존 JSON 파일로 골라 주세요." }
-        val normalized=text.removePrefix("\uFEFF").replace("\r\n","\n").trim()
-        var payload=normalized
-        if(!normalized.startsWith("{")) {
-            val start=normalized.lastIndexOf("\n$START\n")
-            val end=normalized.lastIndexOf("\n$END")
-            require(start>=0 && end>start && normalized.substring(end+1)==END) { "이 앱에서 내보낸 TXT 백업을 선택해 주세요. 복원 데이터가 없거나 손상됐습니다." }
-            payload=normalized.substring(start+START.length+2,end)
-        }
-        return try {
-            // Bound recursive JSONObject parsing before handing it untrusted file data.
-            var depth=0; var quoted=false; var escaped=false
-            for(char in payload) {
-                if(quoted) { if(escaped) escaped=false else if(char=='\\') escaped=true else if(char=='"') quoted=false }
-                else if(char=='"') quoted=true
-                else if(char=='{' || char=='[') { depth++; require(depth<=32) }
-                else if(char=='}' || char==']') depth--
-            }
-            snapshot(JSONObject(payload))
-        }
-        catch (_: Exception) { error("백업 내용을 읽을 수 없습니다. 원본 TXT 또는 기존 JSON 백업을 선택해 주세요.") }
-    }
-    fun merge(existing: JSONObject,incoming: JSONObject): JSONObject {
-        fun append(key: String): JSONArray {
-            val current=existing.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
-            val extra=incoming.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
-            return JSONArray(current+extra.filter { other -> current.none { it.getString("id")==other.getString("id") } })
-        }
-        val custom=(strings(existing.getJSONArray("customWords"))+strings(incoming.getJSONArray("customWords"))).distinct().take(10)
-        return AppStore.validate(JSONObject(existing.toString()).put("ideas",append("ideas")).put("folders",append("folders")).put("customWords",JSONArray(custom)))
     }
 }

@@ -3,61 +3,54 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { freshLibrary, saveRecord } from '../src/demo/storage.js'
 import { composeIdea, elaborateIdea } from '../src/demo/domain.js'
-import { BACKUP_START, BACKUP_END, MAX_BACKUP_BYTES, exportTextBackup, importTextBackup, mergeBackup } from '../src/demo/backup.js'
+import * as backup from '../src/demo/backup.js'
+const { exportTextBackup } = backup
 
 const fixture = () => {
   const idea=composeIdea({categoryId:'food',words:['딸기','자전거','구름'],condition:'작게 시작하기'})
   idea.elaboration=elaborateIdea(idea); idea.elaborationSource='rules'
-  idea.description += '\n줄바꿈과 "따옴표", 이모지 🍓\n' + BACKUP_START
+  idea.description += '\n줄바꿈과 "따옴표", 이모지 🍓'
   const library=saveRecord(freshLibrary(),idea,{name:'나의 딸기 아이디어',folderId:'default'})
   library.customWords=['딸기','여행']; library.draft={apiKey:'mock-private-draft-not-for-export'}
   library.apiKey='mock-private-settings-not-for-export'; library.ideas[0].apiKey='mock-private-record-not-for-export'
   return library
 }
-test('TXT contains readable Korean content, steps and elaboration, and restores losslessly without keys/draft',()=>{
-  const data=fixture(), text=exportTextBackup(data), restored=importTextBackup(text)
-  for(const value of ['아이디어 보조 · 보관함 백업','나의 딸기 아이디어','[아이디어 설명]','[작게 시작하는 방법]','[구체화]',data.ideas[0].elaboration.target_user]) assert.ok(text.includes(value))
+test('TXT export is readable Korean with steps and elaboration, without restoration payload or private settings',()=>{
+  const data=fixture(), text=exportTextBackup(data)
+  for(const value of ['보관함 내보내기','나의 딸기 아이디어','[아이디어 설명]','[작게 시작하는 방법]','[구체화]',data.ideas[0].elaboration.target_user,'줄바꿈과 "따옴표", 이모지 🍓']) assert.ok(text.includes(value))
   assert.ok(text.startsWith('\uFEFF')); assert.ok(text.includes('\r\n'))
-  assert.doesNotMatch(text,/mock-private|apiKey/)
-  const {apiKey,...clean}=data.ideas[0]
-  assert.deepEqual(restored.ideas[0],clean); assert.equal(restored.draft,null)
-  assert.deepEqual(restored.customWords,data.customWords); assert.deepEqual(restored.folders,data.folders)
-  assert.deepEqual(importTextBackup(text.replace(/\r\n/g,'\n')),restored)
-  assert.deepEqual(importTextBackup(text.replace('나의 딸기 아이디어','읽기용 본문만 수정')),restored)
+  assert.doesNotMatch(text,/mock-private|apiKey|IDEA-ASSIST-BACKUP|복원 데이터|"version":/)
 })
-test('old JSON backups remain importable; empty TXT works; merge preserves existing records and draft',()=>{
-  const data=fixture()
-  const incoming=importTextBackup(JSON.stringify(data))
-  const current={...incoming,draft:{words:['a','b','c']}}
-  current.ideas[0]={...current.ideas[0],name:'기존 제목 유지'}
-  const merged=mergeBackup(current,incoming)
-  assert.equal(merged.ideas.length,1); assert.equal(merged.ideas[0].name,'기존 제목 유지')
-  assert.deepEqual(merged.draft,current.draft)
-  assert.deepEqual(importTextBackup(exportTextBackup(freshLibrary())),freshLibrary())
+test('export does not change saved ideas, draft, folders or custom words',()=>{
+  const data=fixture(), before=JSON.stringify(data)
+  exportTextBackup(data)
+  assert.equal(JSON.stringify(data),before)
 })
-test('ordinary text, corrupt/missing recovery data, malformed legacy JSON and oversized input fail before merging',()=>{
-  const text=exportTextBackup(fixture())
-  for(const bad of ['메모장에 직접 쓴 일반 텍스트',text.replace(BACKUP_END,''),text+'뒤에 다른 내용',text.replace('"version": 1','"version": 99'),'{broken','{"nested":'+ '['.repeat(40)+'0'+']'.repeat(40)+'}',' '.repeat(MAX_BACKUP_BYTES+1)]) assert.throws(()=>importTextBackup(bad),/백업|TXT/)
+test('empty archive and multiple folders export as plain text, preserving readable source labels',()=>{
+  assert.match(exportTextBackup(freshLibrary()),/저장한 아이디어: 0개/)
+  const data=fixture(); data.folders.push({id:'travel',name:'여행 폴더'})
+  data.ideas[0].folderId='travel'; data.ideas[0].source='gemini'; data.ideas[0].model='test-model'
+  const text=exportTextBackup(data)
+  assert.match(text,/폴더: 여행 폴더/); assert.match(text,/Google Gemini 생성 \/ test-model/)
 })
-test('web/native share a readable TXT fixture with custom topic, folders and elaboration',()=>{
-  const text=readFileSync(new URL('../android/app/src/debug/assets/web-txt-backup-fixture.txt',import.meta.url),'utf8')
-  const data=importTextBackup(text)
-  assert.equal(data.ideas[0].name,'교차 복원 검사')
-  assert.equal(data.ideas[0].topic,'반려동물과 여행')
-  assert.equal(data.ideas[0].elaboration.core_features.length,3)
-  assert.equal(data.folders[1].name,'여행 폴더')
-  assert.deepEqual(importTextBackup(exportTextBackup(data)),data)
+test('invalid and oversized libraries reject export instead of reporting success',()=>{
+  assert.throws(()=>exportTextBackup({}),/백업/)
+  const data=fixture(), idea=data.ideas[0], long='가'.repeat(2000)
+  data.ideas=Array.from({length:500},(_,i)=>({...idea,id:'export-limit-'+i,description:long,one_liner:long,steps:[long,long,long]}))
+  assert.throws(()=>exportTextBackup(data),/10MB/)
 })
-test('backup UI uses TXT; unsaved popup matches grouped design and keeps cancel/save/leave separate',()=>{
-  const app=readFileSync(new URL('../src/demo-main.jsx',import.meta.url),'utf8')
-  const leave=readFileSync(new URL('../src/LeaveDialog.jsx',import.meta.url),'utf8')
-  const native=readFileSync(new URL('../android/app/src/main/java/com/ideaassist/app/MainActivity.kt',import.meta.url),'utf8')
+test('web/native expose TXT export only, remove import handlers and explanation, and keep unsaved dialog actions',()=>{
+  const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
+  const app=read('../src/demo-main.jsx'), leave=read('../src/LeaveDialog.jsx')
+  const native=read('../android/app/src/main/java/com/ideaassist/app/MainActivity.kt')
   assert.match(app,/link.download = '아이디어-보관함-백업.txt'/)
-  assert.match(app,/accept="text\/plain,.txt,application\/json,.json"/)
+  assert.doesNotMatch(app,/importLibrary|importTextBackup|mergeBackup|type="file"|import-label|backup-help|가져오기/)
+  assert.doesNotMatch(native,/ACTION_OPEN_DOCUMENT|requestCode == 102|LibraryBackup.importText|LibraryBackup.merge|↑ 가져오기|TXT로 읽고|기존 JSON 백업/)
+  assert.deepEqual(Object.keys(backup).sort(),['MAX_BACKUP_BYTES','exportTextBackup'])
+  assert.match(native,/ACTION_CREATE_DOCUMENT/)
   assert.match(app,/busyRef.current \|\| unsaved/)
   assert.match(app,/<LeaveDialog\s+onSave=/)
-  assert.match(leave,/leave-icon/); assert.match(leave,/onClick=\{onStay\}>계속 다듬기/)
+  assert.match(leave,/onClick=\{onStay\}>계속 다듬기/)
   assert.match(leave,/onClick=\{onSave\}>저장하러 가기/)
   assert.match(native,/private fun showLeaveDialog/)
-  assert.doesNotMatch(native,/AlertDialog.Builder\(this\).setTitle\("저장하지/)
 })

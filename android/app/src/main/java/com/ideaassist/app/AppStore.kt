@@ -16,7 +16,7 @@ class AppStore(context: Context) {
         if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) fresh()
         else validate(JSONObject(String(file.readFully(), Charsets.UTF_8)))
     } catch (_: Exception) {
-        loadError = "저장 파일을 읽지 못했습니다. 기존 파일을 보호했습니다. TXT 또는 기존 JSON 백업을 가져와 복구해 주세요."
+        loadError = "저장 파일을 읽지 못했습니다. 기존 파일을 덮어쓰지 않고 보호한 채 임시로 시작합니다."
         fresh()
     }
     fun write(value: JSONObject, recover: Boolean = false) {

@@ -60,23 +60,13 @@ class AppCoreInstrumentation : Instrumentation() {
             check(AppStore.validate(JSONObject(library.toString())).getJSONArray("ideas").length() == 1)
             check(runCatching { AppStore.validate(JSONObject().put("version", 999)) }.isFailure)
             passed.put("atomic_storage_and_backup_validation")
-            val txtFixture=targetContext.assets.open("web-txt-backup-fixture.txt").bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val importedTxt=LibraryBackup.importText(txtFixture)
-            check(importedTxt.getJSONArray("ideas").getJSONObject(0).getString("topic")=="반려동물과 여행")
-            check(importedTxt.getJSONArray("ideas").getJSONObject(0).getJSONObject("elaboration").getJSONArray("core_features").length()==3)
-            importedTxt.put("apiKey","mock-private-settings-no-export").put("draft",JSONObject().put("apiKey","mock-private-draft-no-export"))
-            importedTxt.getJSONArray("ideas").getJSONObject(0).put("apiKey","mock-private-record-no-export")
-            val exportedTxt=LibraryBackup.exportText(importedTxt)
-            check(exportedTxt.startsWith("\uFEFF") && exportedTxt.contains("[아이디어 설명]") && exportedTxt.contains("[구체화]") && !exportedTxt.contains("mock-private") && !exportedTxt.contains("apiKey"))
-            check(LibraryBackup.importText(exportedTxt).getJSONArray("ideas").getJSONObject(0).getString("name")=="교차 복원 검사")
-            check(LibraryBackup.importText(importedTxt.toString()).getJSONArray("ideas").length()==1)
-            check(LibraryBackup.merge(LibraryBackup.importText(exportedTxt),LibraryBackup.importText(exportedTxt)).getJSONArray("ideas").length()==1)
-            check(LibraryBackup.importText(LibraryBackup.exportText(AppStore.fresh())).getJSONArray("ideas").length()==0)
-            listOf("일반 메모",exportedTxt.replace(LibraryBackup.END,""),exportedTxt.replace("\"version\": 1","\"version\": 99"),"{broken","{\"nested\":"+"[".repeat(40)+"0"+"]".repeat(40)+"}").forEach {
-                check(runCatching { LibraryBackup.importText(it) }.isFailure)
-            }
-            File(targetContext.cacheDir,"core-native-txt-backup.txt").writeText(exportedTxt,Charsets.UTF_8)
-            passed.put("readable_txt_web_fixture_native_roundtrip_legacy_json_merge_invalid_rejection_no_keys")
+            val exportFixture=JSONObject(library.toString()).put("apiKey","mock-private-settings-no-export").put("draft",JSONObject().put("apiKey","mock-private-draft-no-export"))
+            exportFixture.getJSONArray("ideas").getJSONObject(0).put("apiKey","mock-private-record-no-export")
+            val exportedTxt=LibraryBackup.exportText(exportFixture)
+            check(exportedTxt.startsWith("\uFEFF") && exportedTxt.contains("[아이디어 설명]") && exportedTxt.contains("[작게 시작하는 방법]"))
+            check(!exportedTxt.contains("mock-private") && !exportedTxt.contains("apiKey") && !exportedTxt.contains("IDEA-ASSIST-BACKUP") && !exportedTxt.contains("복원 데이터"))
+            check(LibraryBackup.exportText(AppStore.fresh()).contains("저장한 아이디어: 0개"))
+            passed.put("readable_txt_export_only_no_restore_data_or_private_settings")
             val legacy=JSONObject(fixture.toString()).put("id","legacy-name").put("name","직접 주제 검증 · 규칙 abc123")
             val manual=JSONObject(fixture.toString()).put("id","manual-name").put("name","사용자 제목")
             val migrated=AppStore.validate(AppStore.fresh().put("ideas",JSONArray().put(manual).put(legacy)))
@@ -297,6 +287,11 @@ class AppCoreInstrumentation : Instrumentation() {
             click("보관함에서 확인하기")
             check(session.screen == "archive" && !session.dirty)
             runOnMainSync { checkTitle(activity.window.decorView,"모아둔 생각들.") }
+            runOnMainSync {
+                val views=walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().toList()
+                check(views.any { it.text.toString()=="↓ 백업" })
+                check(views.none { it.text.contains("가져오기") || it.text.contains("기존 JSON 백업") || it.text.contains("TXT로 읽고") })
+            }
             val saved = session.store.read().getJSONArray("ideas")
             check((0 until saved.length()).any { saved.getJSONObject(it).getString("name") == name })
             click(name)
@@ -331,12 +326,12 @@ class AppCoreInstrumentation : Instrumentation() {
             val exportUri=android.net.Uri.fromFile(exportPath)
             val documentResult=MainActivity::class.java.getDeclaredMethod("onActivityResult",Int::class.javaPrimitiveType,Int::class.javaPrimitiveType,Intent::class.java).apply { isAccessible=true }
             runOnMainSync { documentResult.invoke(activity,101,android.app.Activity.RESULT_OK,Intent().setData(exportUri)) }
-            val exportedLibrary=LibraryBackup.importText(exportPath.readText(Charsets.UTF_8))
-            check(exportedLibrary.getJSONArray("ideas").length()==2)
-            val countBefore=session.library.getJSONArray("ideas").length()
+            val exportedText=exportPath.readText(Charsets.UTF_8)
+            check(exportedText.contains("저장한 아이디어: 2개") && exportedText.contains(topicName) && exportedText.contains("[구체화]"))
+            val beforeRemovedImport=session.library.toString()
             runOnMainSync { documentResult.invoke(activity,102,android.app.Activity.RESULT_OK,Intent().setData(exportUri)) }
-            check(session.screen=="archive" && session.library.getJSONArray("ideas").length()==countBefore)
-            passed.put("native_document_export_import_callbacks_readable_txt_no_duplicate_records")
+            check(session.library.toString()==beforeRemovedImport)
+            passed.put("native_document_export_txt_removed_import_callback_does_not_change_library")
             // Use an isolated consent store; test acknowledgement is never user consent.
             val fixturePreferenceName="core-cloud-consent-${UUID.randomUUID()}"
             val fixturePreferences=targetContext.getSharedPreferences(fixturePreferenceName,0)
