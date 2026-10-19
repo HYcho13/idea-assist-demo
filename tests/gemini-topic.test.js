@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { geminiGenerate, GEMINI_ENDPOINT, GEMINI_MODEL } from '../src/demo/gemini-ai.js'
+import { geminiGenerate, geminiError, GEMINI_ENDPOINT, GEMINI_MODEL } from '../src/demo/gemini-ai.js'
 import { drawWords, composeIdea, developIdea, elaborateIdea } from '../src/demo/domain.js'
 import { validateTopic } from '../src/demo/topic.js'
 import { schemaFor, sourceLabel } from '../src/demo/ai-contract.js'
@@ -17,6 +17,8 @@ test('Gemini uses fixed Google endpoint, header key, JSON schema and true proven
   assert.equal(captured.url,GEMINI_ENDPOINT); assert.equal(captured.headers['x-goog-api-key'],key)
   assert.ok(!captured.url.includes(key) && !captured.body.includes(key)); assert.ok(!captured.headers.Authorization)
   const body=JSON.parse(captured.body)
+  assert.equal(body.generationConfig.responseFormat.text.mimeType,'APPLICATION_JSON')
+  assert.equal(captured.headers['Content-Type'],'application/json')
   assert.deepEqual(body.generationConfig.responseFormat.text.schema,schemaFor('generate'))
   assert.match(body.contents[0].parts[0].text,/독서 여행/)
   assert.equal(result.source,'gemini'); assert.equal(result.model,GEMINI_MODEL); assert.equal(result.topic,args.topic)
@@ -33,6 +35,27 @@ test('Gemini development and elaboration preserve input context and validate tas
   let body
   assert.deepEqual(await geminiGenerate({...args,type:'elaborate',current},{apiKey:key,fetchImpl:async(_,opts)=>{body=JSON.parse(opts.body);return reply(payload(detail))}}),detail)
   assert.deepEqual(body.generationConfig.responseFormat.text.schema,schemaFor('elaborate'))
+  assert.equal(body.generationConfig.responseFormat.text.mimeType,'APPLICATION_JSON')
+})
+test('Gemini error classification distinguishes request, credentials, restrictions and quota without leaking provider data',async()=>{
+  const failure=(status,reason,message=key)=>({error:{status,message,details:[{reason}]}})
+  const cases=[
+    [400,failure('INVALID_ARGUMENT',''),/요청 형식/],
+    [400,failure('INVALID_ARGUMENT','API_KEY_INVALID'),/유효하지/],
+    [400,failure('INVALID_ARGUMENT','','API key expired. '+key),/만료/],
+    [403,failure('PERMISSION_DENIED','','Your API key was reported as leaked. '+key),/노출된 키/],
+    [403,failure('PERMISSION_DENIED','SERVICE_DISABLED'),/비활성화/],
+    [403,failure('PERMISSION_DENIED','API_KEY_HTTP_REFERRER_BLOCKED'),/사용 제한/],
+    [400,failure('FAILED_PRECONDITION',''),/사용 조건/],
+    [401,failure('UNAUTHENTICATED',''),/인증/],
+    [403,failure('PERMISSION_DENIED',''),/접근이 거부/],
+    [429,failure('RESOURCE_EXHAUSTED',''),/한도/],
+  ]
+  for(const [status,body,expected] of cases){
+    assert.match(geminiError(status,body),expected)
+    await assert.rejects(geminiGenerate(args,{apiKey:key,fetchImpl:async()=>reply(body,status)}),error=>expected.test(error.message)&&!error.message.includes(key))
+  }
+  for(const status of [400,403,500]) await assert.rejects(geminiGenerate(args,{apiKey:key,fetchImpl:async()=>({ok:false,status,json:async()=>{throw Error(key)}})}),error=>/Google Gemini/.test(error.message)&&!error.message.includes(key))
 })
 test('Gemini missing key, malformed/refused/truncated response and HTTP errors never silently use rules or expose keys',async()=>{
   let calls=0

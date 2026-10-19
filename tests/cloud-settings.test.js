@@ -23,7 +23,7 @@ test('saved cost consent survives reopening and is isolated by provider and noti
 })
 test('key and explicit consent are required; rejected or unsaved edits never create consent',()=>{
   const storage=memory()
-  for(const [provider,key,consent] of [['openai','',true],['openai','mock',false],['invalid','mock',true],['gemini','line\nbreak',true],['gemini','x'.repeat(513),true]]) assert.throws(()=>validateCloudSettings(provider,key,consent))
+  for(const [provider,key,consent] of [['openai','',true],['openai','mock',false],['invalid','mock',true],['gemini','line\nbreak',true],['gemini','x'.repeat(8193),true],['openai','x'.repeat(513),true]]) assert.throws(()=>validateCloudSettings(provider,key,consent))
   assert.throws(()=>saveConsent('openai',false,storage)); assert.equal(storage.values.size,0)
   const mock='mock-key-for-settings-tests-only'
   assert.equal(validateCloudSettings('gemini',` ${mock} `,true),mock)

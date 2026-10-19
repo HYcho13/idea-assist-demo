@@ -249,9 +249,8 @@ class AiEngine(context: Context) : AutoCloseable {
     }
 
     private fun gemini(prompt: String, schema: JSONObject, progress: (String) -> Unit): JSONObject {
-        val key=apiKey.trim()
+        val key=GeminiApi.normalizeKey(apiKey)
         require(key.isNotEmpty()) { "Google Gemini 개인 API 키를 입력하세요." }
-        require(key.length<=512 && key.all { it.code in 33..126 }) { "API 키 형식을 확인하세요." }
         checkCancelled(); progress("Google Gemini 생성 중 · 입력이 Google로 전송됩니다")
         val request=URL(GeminiApi.ENDPOINT).openConnection() as HttpsURLConnection
         request.instanceFollowRedirects=false; request.connectTimeout=20000; request.readTimeout=60000
@@ -262,12 +261,11 @@ class AiEngine(context: Context) : AutoCloseable {
             checkCancelled()
             request.outputStream.use { it.write(GeminiApi.request(SYSTEM,prompt,schema).toString().toByteArray(Charsets.UTF_8)) }
             val code=request.responseCode
-            check(code in 200..299) { when(code) {
-                400,401,403 -> "Google Gemini 키·프로젝트·API 권한을 확인하세요 (HTTP $code)."
-                404 -> "이 Google 프로젝트에서 Gemini 모델을 사용할 수 없습니다 (HTTP 404)."
-                429 -> "Google Gemini 요청 또는 사용량 한도를 초과했습니다 (HTTP 429)."
-                else -> "Google Gemini 요청 실패 (HTTP $code). 잠시 후 다시 시도하세요."
-            } }
+            if(code !in 200..299) {
+                val failure=runCatching { request.errorStream?.use { JSONObject(it.readBytesBounded(64*1024).toString(Charsets.UTF_8)) } }.getOrNull()
+                checkCancelled()
+                error(GeminiApi.errorMessage(code,failure))
+            }
             val bytes=request.inputStream.use { it.readBytesBounded(256*1024) }; checkCancelled()
             return GeminiApi.parse(JSONObject(bytes.toString(Charsets.UTF_8)))
         } catch(e: Exception) {

@@ -11,7 +11,7 @@ import java.util.concurrent.Future
 
 /** Activity-free session: one worker, memory-only key, safe rotation and cancellation. */
 class AppSession private constructor(context: Context) {
-    val store = AppStore(context.applicationContext)
+    internal var store = AppStore(context.applicationContext)
     var library = store.read()
     val preferences = context.applicationContext.getSharedPreferences("native-ui", Context.MODE_PRIVATE)
     val engine = AiEngine(context.applicationContext)
@@ -57,6 +57,12 @@ class AppSession private constructor(context: Context) {
             condition = draft.optString("condition").take(160)
             useCustom = draft.optBoolean("useCustom", true)
             current = if (validDraft) draft.optJSONObject("idea")?.let { AppStore.cleanIdea(it) } else null
+            current?.let { idea ->
+                if(Regex("^(자동 검증 · 규칙|직접 주제 검증 · 규칙) [0-9a-f]{6}$").matches(idea.optString("name"))) {
+                    val ideas=library.getJSONArray("ideas")
+                    (0 until ideas.length()).map { ideas.getJSONObject(it) }.firstOrNull { it.optString("id")==idea.optString("id") }?.let { idea.put("name",it.getString("name")) }
+                }
+            }
             dirty = draft.optBoolean("dirty", false) && current != null
             screen = if (current != null) "result" else "home"
         }
@@ -65,8 +71,8 @@ class AppSession private constructor(context: Context) {
     fun cloudConsent(provider: String) = cloudConsentStore.accepted(provider)
     fun saveCloudSettings(provider: String, key: String, consent: Boolean) {
         require(provider in listOf("openai","gemini")) { "AI 제공업체를 선택하세요." }
-        val clean=key.trim()
-        require(clean.isNotEmpty() && clean.length<=512 && clean.all { it.code in 33..126 }) { "본인의 개인 API 키를 입력하고 형식을 확인해 주세요." }
+        val clean=if(provider=="gemini") GeminiApi.normalizeKey(key) else key.trim()
+        require(clean.isNotEmpty() && (provider=="gemini" || clean.length<=512) && clean.all { it.code in 33..126 }) { "본인의 개인 API 키를 입력하고 형식을 확인해 주세요." }
         cloudConsentStore.save(provider,consent)
         check(preferences.edit().putString("mode","cloud").putString("cloudProvider",provider).commit()) { "클라우드 설정을 저장하지 못했습니다. 다시 시도하세요." }
         engine.cloudProvider=provider; engine.cloudModel=if(provider=="gemini") GeminiApi.MODEL else "gpt-4.1-mini"

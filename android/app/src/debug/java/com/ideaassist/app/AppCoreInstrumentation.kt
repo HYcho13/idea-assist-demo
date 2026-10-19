@@ -22,6 +22,16 @@ class AppCoreInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
     override fun onStart() {
         val passed = JSONArray()
+        fun checkTitle(root: View, text: String) {
+            val title=walk(root).filterIsInstance<android.widget.TextView>().single { it.text.toString()==text }
+            val metrics=targetContext.resources.displayMetrics
+            val expected=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,41f,metrics).toInt()
+            val expectedSize=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,32f,metrics)
+            check(title.lineHeight==expected && kotlin.math.abs(title.textSize-expectedSize)<1f && title.typeface.isBold) { "Heading must be 32/41 Bold: $text" }
+        }
+        var isolatedSession: AppSession?=null
+        var originalStore: AppStore?=null
+        var originalLibrary: JSONObject?=null
         try {
             for (category in DemoDomain.categoryIds) repeat(50) {
                 val first = DemoDomain.draw(category, emptyList(), emptySet(), emptyList(), false)
@@ -49,6 +59,14 @@ class AppCoreInstrumentation : Instrumentation() {
             check(AppStore.validate(JSONObject(library.toString())).getJSONArray("ideas").length() == 1)
             check(runCatching { AppStore.validate(JSONObject().put("version", 999)) }.isFailure)
             passed.put("atomic_storage_and_backup_validation")
+            val legacy=JSONObject(fixture.toString()).put("id","legacy-name").put("name","직접 주제 검증 · 규칙 abc123")
+            val manual=JSONObject(fixture.toString()).put("id","manual-name").put("name","사용자 제목")
+            val migrated=AppStore.validate(AppStore.fresh().put("ideas",JSONArray().put(manual).put(legacy)))
+            check(migrated.getJSONArray("ideas").getJSONObject(0).getString("name")=="사용자 제목")
+            check(migrated.getJSONArray("ideas").getJSONObject(1).getString("name")=="새 아이디어 1")
+            check(AppStore.nextIdeaName(migrated.getJSONArray("ideas"))=="새 아이디어 2")
+            check(AppStore.validate(JSONObject(migrated.toString())).toString()==migrated.toString())
+            passed.put("numbered_default_names_and_exact_legacy_name_migration_preserve_manual_names")
             val missingKey = AiEngine(targetContext).apply { mode = "cloud" }
             check(runCatching { missingKey.generate("food", "음식 개발", wordList, "작게 시작하기") }.isFailure)
             missingKey.close()
@@ -76,26 +94,112 @@ class AppCoreInstrumentation : Instrumentation() {
             check(runCatching { GeminiApi.parse(googleResponse) }.isFailure)
             check(runCatching { GeminiApi.parse(JSONObject().put("promptFeedback",JSONObject().put("blockReason","SAFETY"))) }.isFailure)
             check(GeminiApi.ENDPOINT.startsWith("https://generativelanguage.googleapis.com/"))
-            check(GeminiApi.request("system","topic",JSONObject().put("type","object")).getJSONObject("generationConfig").has("responseFormat"))
+            val googleFormat=GeminiApi.request("system","topic",JSONObject().put("type","object")).getJSONObject("generationConfig").getJSONObject("responseFormat").getJSONObject("text")
+            check(googleFormat.getString("mimeType")=="APPLICATION_JSON")
+            check(googleFormat.getJSONObject("schema").getString("type")=="object")
+            val privateFixture="mock-private-input-not-for-display"
+            fun googleFailure(status: String,reason: String="",message: String=privateFixture)=JSONObject().put("error",JSONObject().put("status",status).put("message",message).put("details",JSONArray().put(JSONObject().put("reason",reason))))
+            val googleErrors=listOf(
+                Triple(400,googleFailure("INVALID_ARGUMENT"),"요청 형식"),
+                Triple(400,googleFailure("INVALID_ARGUMENT","API_KEY_INVALID"),"유효하지"),
+                Triple(400,googleFailure("INVALID_ARGUMENT",message="API key expired. $privateFixture"),"만료"),
+                Triple(403,googleFailure("PERMISSION_DENIED",message="Your API key was reported as leaked. $privateFixture"),"노출된 키"),
+                Triple(403,googleFailure("PERMISSION_DENIED","SERVICE_DISABLED"),"비활성화"),
+                Triple(403,googleFailure("PERMISSION_DENIED","API_KEY_ANDROID_APP_BLOCKED"),"사용 제한"),
+                Triple(400,googleFailure("FAILED_PRECONDITION"),"사용 조건"),
+                Triple(429,googleFailure("RESOURCE_EXHAUSTED"),"한도")
+            )
+            googleErrors.forEach { (code,payload,expected) ->
+                val safe=GeminiApi.errorMessage(code,payload)
+                check(expected in safe && privateFixture !in safe)
+            }
+            val longMock="mock-long-auth-key-"+"x".repeat(1600)
+            check(GeminiApi.normalizeKey("\ufeff\u200b $longMock \u200b")==longMock)
+            listOf("\"mock-key\"","GEMINI_API_KEY=mock-key","Bearer mock-key","masked****key","short…key","line\nbreak","x".repeat(8193)).forEach { check(runCatching { GeminiApi.normalizeKey(it) }.isFailure) }
+            check(GeminiApi.MODEL_ENDPOINT.endsWith("/models/${GeminiApi.MODEL}") && !GeminiApi.MODEL_ENDPOINT.contains(":generateContent"))
+            passed.put("gemini_complete_key_validation_no_truncation_and_metadata_check_endpoint")
+            passed.put("google_json_enum_and_safe_provider_error_classification")
             check(runCatching { DemoDomain.topic(" ") }.isFailure && runCatching { DemoDomain.topic("가".repeat(81)) }.isFailure)
             passed.put("google_request_shape_refusal_truncation_and_topic_validation")
 
             val session = AppSession.get(targetContext)
+            isolatedSession=session; originalStore=session.store; originalLibrary=session.library
+            runOnMainSync { session.store=store; session.library=AppStore.fresh() }
             runOnMainSync { session.engine.mode = "demo"; session.current = null; session.dirty = false; session.screen = "home"; session.categoryId="food"; session.topic="" }
             val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
             runOnMainSync {
                 val nativeButtons=walk(activity.window.decorView).filterIsInstance<Button>().toList()
                 check(nativeButtons.any { it.text.contains("새로운 메뉴와 맛있는 경험") && it.elevation == 0f })
-                check(nativeButtons.count { it.contentDescription?.toString() == "무작위 아이디어 생성" } == 1)
+                check(nativeButtons.count { it.contentDescription?.toString() == "새 아이디어 주제 선택" } == 1)
                 check(nativeButtons.any { it.text.toString() == "홈" } && nativeButtons.any { it.text.toString() == "보관함" })
+                val title=walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().single { it.text.toString().startsWith("어떤 아이디어를\n") }
+                val expected=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,41f,targetContext.resources.displayMetrics).toInt()
+                check(title.lineHeight==expected) { "Home heading line height: ${title.lineHeight}, expected $expected" }
+                checkTitle(activity.window.decorView,"어떤 아이디어를\n만들어 볼까요?")
             }
             fun click(title: String) = runOnMainSync {
                 val matches = walk(activity.window.decorView).filterIsInstance<Button>().filter { it.text.toString() == title || it.contentDescription?.toString() == title }.toList()
                 check(matches.size == 1) { "Expected one native button: $title, got ${matches.size}" }
                 check(matches[0].isEnabled); matches[0].performClick()
             }
+            fun dialogButtons()=walk(checkNotNull(activity.topicDialog?.window?.decorView)).filterIsInstance<Button>().toList()
+            fun clickTopic(title: String) {
+                runOnMainSync {
+                    val match=dialogButtons().single { it.text.toString()==title || it.contentDescription?.toString()==title }
+                    check(match.isEnabled); match.performClick()
+                }
+                waitForIdleSync()
+            }
+            val initialCategory=session.categoryId
+            val initialWords=session.words.toList()
+            click("새 아이디어 주제 선택")
+            runOnMainSync {
+                check(dialogButtons().map { it.contentDescription.toString() }.containsAll(DemoDomain.categoryNames+listOf("직접 입력","취소")))
+                check(dialogButtons().filter { it.contentDescription.toString() in DemoDomain.categoryNames }.all { it.compoundDrawables[0]!=null && it.compoundDrawables[2]!=null && it.text.toString().contains("\n") })
+                check(!session.busy && session.current==null && session.categoryId==initialCategory && session.words==initialWords)
+                checkTitle(activity.topicDialog!!.window!!.decorView,"어떤 주제로 만들까요?")
+            }
+            clickTopic("직접 입력")
+            runOnMainSync {
+                val field=walk(activity.topicDialog!!.window!!.decorView).filterIsInstance<EditText>().single()
+                checkTitle(activity.topicDialog!!.window!!.decorView,"나만의 주제를 적어주세요")
+                val generate=dialogButtons().single { it.text.toString()=="이 주제로 생성하기" }
+                check(!generate.isEnabled)
+                field.setText("   "); check(!generate.isEnabled)
+                field.setText("반려동물과 함께하는 여행"); check(generate.isEnabled)
+            }
+            runOnMainSync { check(dialogButtons().single { it.contentDescription?.toString()=="선택지로 돌아가기" }.text.isEmpty()) }
+            clickTopic("선택지로 돌아가기"); clickTopic("직접 입력")
+            runOnMainSync { check(walk(activity.topicDialog!!.window!!.decorView).filterIsInstance<EditText>().single().text.toString()=="반려동물과 함께하는 여행") }
+            clickTopic("취소")
+            check(activity.topicDialog==null && session.screen=="home" && session.categoryId==initialCategory && session.words==initialWords)
+            for(index in 0..3) {
+                click("새 아이디어 주제 선택")
+                if(index<3) clickTopic(DemoDomain.categoryNames[index]) else {
+                    clickTopic("직접 입력")
+                    runOnMainSync { walk(activity.topicDialog!!.window!!.decorView).filterIsInstance<EditText>().single().setText("  반려동물과 함께하는 여행  ") }
+                    clickTopic("이 주제로 생성하기")
+                }
+                await { !session.busy && session.current!=null }
+                check(activity.topicDialog==null && session.screen=="result")
+                check(session.categoryId==if(index<3) DemoDomain.categoryIds[index] else "custom")
+                if(index==3) check(session.topic=="반려동물과 함께하는 여행")
+                val retained=session.current!!.toString()
+                click("새 아이디어 주제 선택"); clickTopic("취소")
+                check(session.current!!.toString()==retained && session.dirty)
+                runOnMainSync { session.current=null; session.dirty=false; session.categoryId="food"; session.topic="" }
+                click("홈")
+            }
+            passed.put("native_plus_four_topics_custom_input_cancel_preserves_state_and_selected_generation")
             click("선택하고 시작하기")
             runOnMainSync {
+                val title=walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().single { it.text.toString().startsWith("뜻밖의 세 단어를\n") }
+                val expected=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,41f,targetContext.resources.displayMetrics).toInt()
+                check(title.lineHeight==expected) { "Words heading line height: ${title.lineHeight}, expected $expected" }
+                checkTitle(activity.window.decorView,"뜻밖의 세 단어를\n조합해 보세요.")
+                val buttons=walk(activity.window.decorView).filterIsInstance<Button>().toList()
+                check(buttons.none { it.text.toString()=="‹ 홈" })
+                check(buttons.count { it.text.toString()=="홈" }==1)
                 for (i in listOf(0, 1)) {
                     val view = walk(activity.window.decorView).first { it.contentDescription?.toString() == "${session.words[i]} 고정" }
                     view.performClick()
@@ -108,23 +212,32 @@ class AppCoreInstrumentation : Instrumentation() {
             await { !session.busy && session.current != null }
             check(session.current!!.getString("source") == "rules")
             runOnMainSync {
+                checkTitle(activity.window.decorView,session.current!!.optString("title"))
+                check(walk(activity.window.decorView).filterIsInstance<Button>().none { it.text.toString()=="‹ 단어 조합" })
                 val direction=walk(activity.window.decorView).filterIsInstance<Button>().first { it.contentDescription?.toString() == "더 현실적으로" }
                 check((direction.parent as ViewGroup).childCount == 2) { "Development actions must use the web's two-column grid" }
             }
             click("더 현실적으로")
+            check(!session.busy && session.current?.has("direction")!=true)
+            click("이 방식으로 다듬기")
             await { !session.busy && session.current?.optString("direction") == "realistic" }
             click("한 걸음 더 구체화하기")
             await { !session.busy && session.current?.has("elaboration") == true }
             click("구체화한 아이디어 저장하기")
-            val name = "자동 검증 · 규칙 ${UUID.randomUUID().toString().take(6)}"
-            runOnMainSync { walk(activity.window.decorView).filterIsInstance<EditText>().first().setText(name) }
+            val name = "새 아이디어 1"
+            runOnMainSync {
+                check(walk(activity.window.decorView).filterIsInstance<EditText>().first().text.toString()==name)
+                checkTitle(activity.window.decorView,"생각을\n담아두세요")
+            }
             click("저장하기")
             check(session.screen == "saved" && !session.dirty)
             click("보관함에서 확인하기")
             check(session.screen == "archive" && !session.dirty)
-            val saved = AppStore(targetContext).read().getJSONArray("ideas")
+            runOnMainSync { checkTitle(activity.window.decorView,"모아둔 생각들.") }
+            val saved = session.store.read().getJSONArray("ideas")
             check((0 until saved.length()).any { saved.getJSONObject(it).getString("name") == name })
             click(name)
+            runOnMainSync { check(walk(activity.window.decorView).filterIsInstance<Button>().none { it.text.toString()=="‹ 단어 조합" }) }
             check(session.current!!.getString("name") == name && session.current!!.getString("source") == "rules")
             passed.put("native_view_category_lock_generate_develop_elaborate_save_archive_reopen")
             click("홈")
@@ -136,15 +249,17 @@ class AppCoreInstrumentation : Instrumentation() {
             click("이 조합으로 창조하기")
             await { !session.busy && session.current?.optString("topic")==directTopic }
             click("더 현실적으로")
+            check(!session.busy && session.current?.has("direction")!=true)
+            click("이 방식으로 다듬기")
             await { !session.busy && session.current?.optString("direction")=="realistic" }
             click("한 걸음 더 구체화하기")
             await { !session.busy && session.current?.has("elaboration")==true }
             click("구체화한 아이디어 저장하기")
-            val topicName="직접 주제 검증 · 규칙 ${UUID.randomUUID().toString().take(6)}"
-            runOnMainSync { walk(activity.window.decorView).filterIsInstance<EditText>().first().setText(topicName) }
+            val topicName="새 아이디어 2"
+            runOnMainSync { check(walk(activity.window.decorView).filterIsInstance<EditText>().first().text.toString()==topicName) }
             click("저장하기"); click("보관함에서 확인하기"); click(topicName)
             check(session.topic==directTopic && session.current!!.getString("topic")==directTopic)
-            val topicLibrary=AppStore(targetContext).read()
+            val topicLibrary=session.store.read()
             check(topicLibrary.getJSONObject("draft").getString("topic")==directTopic)
             val roundTrip=AppStore.validate(JSONObject(topicLibrary.toString())).getJSONArray("ideas")
             check((0 until roundTrip.length()).any { roundTrip.getJSONObject(it).optString("topic")==directTopic })
@@ -160,10 +275,15 @@ class AppCoreInstrumentation : Instrumentation() {
             try {
                 runOnMainSync { session.cloudConsentStore=CloudConsentStore(fixturePreferences) }
                 click("모델 설정")
-                runOnMainSync { check(walk(activity.window.decorView).none { it is EditText }) }
+                runOnMainSync {
+                    check(walk(activity.window.decorView).none { it is EditText })
+                    checkTitle(activity.window.decorView,"생각을 만드는 방식")
+                    check(walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().none { it.text.toString()=="클라우드 연결 설정" })
+                }
                 click("클라우드 AI")
                 check(session.screen=="cloud-key")
                 runOnMainSync {
+                    checkTitle(activity.window.decorView,"개인 API 키 입력")
                     val consent=walk(activity.window.decorView).filterIsInstance<CheckBox>().single()
                     check(!consent.isChecked)
                     val save=walk(activity.window.decorView).filterIsInstance<Button>().single { it.contentDescription?.toString()=="설정 저장하기" }
@@ -180,6 +300,16 @@ class AppCoreInstrumentation : Instrumentation() {
                 runOnMainSync { walk(activity.window.decorView).filterIsInstance<Spinner>().single().setSelection(if(savedProvider=="openai")1 else 0) }
                 waitForIdleSync()
                 runOnMainSync { check(!walk(activity.window.decorView).filterIsInstance<CheckBox>().single().isChecked) }
+                runOnMainSync {
+                    val spinner=walk(activity.window.decorView).filterIsInstance<Spinner>().single()
+                    if(spinner.selectedItemPosition!=1) spinner.setSelection(1)
+                }
+                waitForIdleSync()
+                runOnMainSync {
+                    val keyField=walk(activity.window.decorView).filterIsInstance<EditText>().single()
+                    keyField.setText(longMock); check(keyField.text.toString()==longMock)
+                    check(walk(activity.window.decorView).filterIsInstance<Button>().any { it.contentDescription?.toString()=="Gemini 연결 확인 · 생성 없이" })
+                }
                 click("‹ 생성 방식")
                 check(session.engine.cloudProvider==savedProvider && session.engine.apiKey=="mock-key-settings-only-no-network")
                 passed.put("native_separate_key_page_staged_save_provider_consent_persistence_no_network")
@@ -198,7 +328,13 @@ class AppCoreInstrumentation : Instrumentation() {
             finish(0, Bundle().apply { putString("stream", "\nNATIVE_CORE_PASS: ${passed.length()} groups\n") })
         } catch (error: Throwable) {
             File(targetContext.filesDir, "core-smoke-report.json").writeText(JSONObject().put("passed", false).put("checks", passed).put("error", error.message).toString(2))
-            finish(1, Bundle().apply { putString("stream", "\nNATIVE_CORE_FAIL: ${error.message}\n") })
+            val location=error.stackTrace.firstOrNull { it.className.startsWith("com.ideaassist.app") }
+            finish(1, Bundle().apply { putString("stream", "\nNATIVE_CORE_FAIL: ${error.message} at $location\n") })
+        } finally {
+            isolatedSession?.let { session -> runOnMainSync {
+                session.store=checkNotNull(originalStore); session.library=checkNotNull(originalLibrary)
+                session.current=null; session.prior=null; session.dirty=false; session.screen="home"
+            } }
         }
     }
     private fun walk(view: View): Sequence<View> = sequence {

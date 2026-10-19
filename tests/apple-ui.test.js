@@ -24,7 +24,7 @@ test('Apple feedback has capability gating and accessibility alternatives', () =
 })
 
 test('UI refactor preserves three tabs and avoids artificial rule-mode waiting', () => {
-  for (const label of ['홈 탭', '무작위 아이디어 생성', '보관함 탭']) assert.ok(app.includes(label))
+  for (const label of ['홈 탭', '새 아이디어 주제 선택', '보관함 탭']) assert.ok(app.includes(label))
   assert.doesNotMatch(app, /setTimeout\(resolve, 650\)/)
   assert.match(app, /event\.key === 'Escape'/)
   assert.match(app, /event\.key === 'Tab'/)

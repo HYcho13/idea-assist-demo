@@ -33,6 +33,10 @@ class AppStore(context: Context) {
         }
     }
     companion object {
+        fun nextIdeaName(ideas: JSONArray): String {
+            val largest=(0 until ideas.length()).mapNotNull { index -> Regex("^새 아이디어 ([1-9]\\d*)$").matchEntire(ideas.getJSONObject(index).optString("name"))?.groupValues?.get(1)?.toLongOrNull() }.filter { it in 1..9007199254740990L }.maxOrNull() ?: 0L
+            return "새 아이디어 ${largest+1}"
+        }
         fun fresh() = JSONObject().put("version", 1).put("ideas", JSONArray()).put("folders", JSONArray().put(JSONObject().put("id", "default").put("name", "기본 폴더"))).put("customWords", JSONArray()).put("draft", JSONObject.NULL)
         private val ideaKeys = setOf("id", "title", "name", "one_liner", "description", "steps", "used_words", "word_links", "categoryId", "category", "topic", "condition", "source", "model", "revision", "direction", "what_changed", "folderId", "savedAt", "elaboration", "elaborationSource", "elaborationModel")
         fun cleanIdea(idea: JSONObject): JSONObject {
@@ -88,6 +92,10 @@ class AppStore(context: Context) {
                     texts(features); texts(detail.getJSONArray("risks"))
                 }
                 cleanIdeas.put(idea)
+            }
+            for(index in cleanIdeas.length()-1 downTo 0) {
+                val idea=cleanIdeas.getJSONObject(index)
+                if(Regex("^(자동 검증 · 규칙|직접 주제 검증 · 규칙) [0-9a-f]{6}$").matches(idea.getString("name"))) idea.put("name",nextIdeaName(cleanIdeas))
             }
             return JSONObject().put("version", 1).put("ideas", cleanIdeas).put("folders", cleanFolders).put("customWords", custom).put("draft", input.optJSONObject("draft") ?: JSONObject.NULL)
         }

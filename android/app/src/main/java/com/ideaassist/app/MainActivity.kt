@@ -2,6 +2,7 @@ package com.ideaassist.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -29,6 +30,9 @@ import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,9 +52,17 @@ class MainActivity : Activity() {
     private var pendingElaboration = false
     private var nameOptions = emptyList<String>()
     private var topicInput = ""
+    private var selectedDirection: String? = null
+    private var directionIdeaKey = ""
+    internal var topicDialog: Dialog? = null
+        private set
     private var draftProvider = "openai"
     private var draftKey = ""
     private var draftConsent = false
+    @Volatile private var keyCheckTicket=0
+    @Volatile private var keyCheckConnection: javax.net.ssl.HttpsURLConnection?=null
+    private var checkingKey=false
+    private fun cancelKeyVerification() { keyCheckTicket++; keyCheckConnection?.disconnect(); keyCheckConnection=null; checkingKey=false }
     private val ink = ApplePalette.ink
     private val green = ApplePalette.accent
     private val paper = ApplePalette.background
@@ -74,12 +86,15 @@ class MainActivity : Activity() {
         render()
     }
     override fun onDestroy() {
+        cancelKeyVerification()
+        topicDialog?.dismiss()
         if (session.listener === listener) session.listener = null
         super.onDestroy()
     }
     @Deprecated("Android 13+ uses the registered callback")
     override fun onBackPressed() = back()
     private fun back() {
+        if (topicDialog?.isShowing == true) { topicDialog?.cancel(); return }
         if (session.busy) { session.cancel(); return }
         when (session.screen) {
             "cloud-key" -> go("settings")
@@ -106,10 +121,17 @@ class MainActivity : Activity() {
     }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     private fun space(parent: LinearLayout = body, height: Int = 12) { parent.addView(View(this), LinearLayout.LayoutParams(1, dp(height))) }
+    private fun titleLabel(title: String) = label(title, 32f, true).apply {
+        // Medium is not Bold. Use one real bold face for every screen/dialog title.
+        typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        letterSpacing = -.035f
+        val height = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 41f, resources.displayMetrics).toInt()
+        if (Build.VERSION.SDK_INT >= 28) { isFallbackLineSpacing = false; lineHeight = height }
+        else setLineSpacing(height - (paint.fontMetricsInt.descent - paint.fontMetricsInt.ascent).toFloat(), 1f)
+    }
     private fun heading(title: String, subtitle: String = "") {
-        body.addView(label(title, 32f, true).apply {
+        body.addView(titleLabel(title).apply {
             if (title.endsWith("?") || title.endsWith(".")) text = rich(Triple(title.dropLast(1),32,ink),Triple(title.takeLast(1),32,green))
-            letterSpacing = -.035f; setLineSpacing(0f, 1.15f)
         })
         if (subtitle.isNotBlank()) { space(height = 12); body.addView(label(subtitle, 14f, color = muted)) }; space(height = 24)
     }
@@ -189,6 +211,8 @@ class MainActivity : Activity() {
     }
     private fun persist() = session.persist()
     private fun go(screen: String) {
+        if(session.screen=="cloud-key" && screen!="cloud-key") cancelKeyVerification()
+        if(screen!="result") selectedDirection=null
         if(session.screen=="cloud-key" && screen!="cloud-key") draftKey=""
         session.screen = screen; session.error = ""; render()
     }
@@ -287,8 +311,8 @@ class MainActivity : Activity() {
             minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0; setPadding(0, 0, 0, 0)
             background = RippleDrawable(ColorStateList.valueOf(Color.argb(60,255,255,255)), GradientDrawable().apply { setColor(green); cornerRadius = dp(32).toFloat(); setStroke(dp(5), paper) }, shape(Color.WHITE, 32))
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 32f)
-            contentDescription = "무작위 아이디어 생성"; isEnabled = !session.busy
-            setOnClickListener { guarded { start(DemoDomain.categoryIds.random(), true) } }
+            contentDescription = "새 아이디어 주제 선택"; isEnabled = !session.busy
+            setOnClickListener { showTopicPicker() }
         }
         center.addView(plus, LinearLayout.LayoutParams(dp(64), dp(64)))
         center.addView(label("새 아이디어", 11f, color = muted).apply { gravity=Gravity.CENTER; textAlignment=View.TEXT_ALIGNMENT_CENTER },LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(4) })
@@ -322,7 +346,7 @@ class MainActivity : Activity() {
             }
         }
         space(height = 24); button(body, "선택하고 시작하기", true) { guarded { start(session.categoryId, false) } }.isEnabled = session.categoryId in DemoDomain.categoryIds
-        body.addView(label("+  아래 +를 누르면 무작위로 바로 만들어요.", 12f, color = muted).apply { gravity = Gravity.CENTER })
+        body.addView(label("+  아래 +를 눌러 주제를 고르고 바로 만들어요.", 12f, color = muted).apply { gravity = Gravity.CENTER })
         if (session.words.size == 3) { space(); textAction(body, "이전에 고른 단어 이어보기 →") { go("words") } }
     }
     private fun start(id: String, quick: Boolean, topic: String = "") {
@@ -332,8 +356,102 @@ class MainActivity : Activity() {
         session.current = null; session.prior = null; session.dirty = false; session.screen = "words"
         persist(); if (quick) generate() else render()
     }
+    private fun showTopicPicker() {
+        if (session.busy || topicDialog?.isShowing == true) return
+        val dialog=Dialog(this)
+        val panel=column().apply { setPadding(dp(24),dp(28),dp(24),dp(16)); background=shape(paper,28) }
+        val scroll=ScrollView(this).apply { isFillViewport=false; addView(panel) }
+        var draft=""
+        fun choose(id: String, topic: String="") {
+            dialog.dismiss()
+            guarded { start(id,true,topic) }
+        }
+        lateinit var showChoices: () -> Unit
+        fun iconButton(parent: LinearLayout, kind: Int, description: String, action: () -> Unit): Button = button(parent,"",action=action).apply {
+            contentDescription=description; text=""; background=touchSurface(Color.TRANSPARENT,12)
+            val icon=NavIcon(kind,muted).apply { setBounds(0,0,dp(20),dp(20)) }
+            setCompoundDrawables(icon,null,null,null); setPadding(dp(12),dp(12),dp(12),dp(12))
+            layoutParams=LinearLayout.LayoutParams(dp(44),dp(44)); minHeight=dp(44)
+        }
+        fun toolbar(back: (() -> Unit)? = null) {
+            val row=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+            if(back!=null) iconButton(row,7,"선택지로 돌아가기",back)
+            row.addView(View(this),LinearLayout.LayoutParams(0,1,1f))
+            iconButton(row,10,"대화상자 닫기") { dialog.cancel() }
+            panel.addView(row)
+        }
+        fun showInput() {
+            panel.removeAllViews()
+            toolbar {
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(panel.windowToken,0)
+                showChoices()
+            }
+            panel.addView(titleLabel("나만의 주제를 적어주세요")); space(panel,20)
+            val counter=label("${draft.length}/80",12f,color=muted).apply { gravity=Gravity.END }
+            val failure=label("",13f,color=Color.rgb(158,48,34)).apply { visibility=View.GONE }
+            val field=field(panel,"주제·분야",draft,80) { value ->
+                draft=value; counter.text="${value.length}/80"; failure.visibility=View.GONE
+            }.apply {
+                hint="예: 반려동물과 함께하는 여행"
+                imeOptions=EditorInfo.IME_ACTION_GO
+            }
+            panel.addView(label("1~80자로 적어주세요. 입력한 주제 안에서 세 단어를 연결해요.",13f,color=muted)); space(panel,8)
+            panel.addView(counter); space(panel,12); panel.addView(failure)
+            val generate=button(panel,"이 주제로 생성하기",true) {
+                try { choose("custom",DemoDomain.topic(draft)) }
+                catch (error: IllegalArgumentException) { failure.text="주제·분야를 1~80자로 입력해 주세요."; failure.visibility=View.VISIBLE }
+            }.apply { isEnabled=draft.isNotBlank() }
+            field.addTextChangedListener(object: TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?,start: Int,count: Int,after: Int) {}
+                override fun onTextChanged(s: CharSequence?,start: Int,before: Int,count: Int) { generate.isEnabled=!s.isNullOrBlank() }
+                override fun afterTextChanged(s: Editable?) {}
+            })
+            field.setOnEditorActionListener { _,action,_ ->
+                if(action==EditorInfo.IME_ACTION_GO) { if(generate.isEnabled) generate.performClick(); true } else false
+            }
+            button(panel,"취소") { dialog.cancel() }
+            field.requestFocus()
+            field.post { if(dialog.isShowing) (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(field,InputMethodManager.SHOW_IMPLICIT) }
+        }
+        showChoices={
+            panel.removeAllViews()
+            val header=LinearLayout(this).apply { gravity=Gravity.TOP }
+            header.addView(titleLabel("어떤 주제로 만들까요?"),LinearLayout.LayoutParams(0,-2,1f))
+            iconButton(header,10,"대화상자 닫기") { dialog.cancel() }
+            panel.addView(header); space(panel,12)
+            panel.addView(label("분야를 고르면 세 단어를 뽑아 바로 생성해요.",14f,color=muted)); space(panel,20)
+            val descriptions=listOf("새로운 메뉴와 맛있는 경험","일상을 바꾸는 앱과 서비스","우리 주변 문제를 새롭게 해결","원하는 주제·분야를 자유롭게 작성")
+            fun choice(index: Int,title: String, action: () -> Unit) {
+                button(panel,title,action=action).apply {
+                    text=rich(Triple(title+"\n",15,ink),Triple(descriptions[index],12,muted))
+                    minHeight=dp(76); gravity=Gravity.START or Gravity.CENTER_VERTICAL; setLineSpacing(dp(4).toFloat(),1.2f)
+                    setPadding(dp(16),dp(16),dp(16),dp(16)); background=touchSurface(Color.WHITE,18)
+                    val icon: Drawable=if(index==1) MarkIcon("⌘",green) else NavIcon(if(index==0)2 else if(index==2)4 else 9,green)
+                    icon.setBounds(0,0,dp(28),dp(28))
+                    val chevron=NavIcon(8,muted).apply { setBounds(0,0,dp(18),dp(18)) }
+                    setCompoundDrawables(icon,null,chevron,null); compoundDrawablePadding=dp(12)
+                }
+            }
+            DemoDomain.categoryIds.forEachIndexed { index,id ->
+                choice(index,DemoDomain.categoryNames[index]) { choose(id) }
+            }
+            choice(3,"직접 입력") { showInput() }
+            space(panel,8); button(panel,"취소") { dialog.cancel() }
+        }
+        dialog.setContentView(scroll)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener { if(topicDialog===dialog) topicDialog=null }
+        showChoices(); topicDialog=dialog
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(.34f)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        dialog.show()
+        dialog.window?.setLayout(minOf(resources.displayMetrics.widthPixels-dp(24),dp(480)),WindowManager.LayoutParams.WRAP_CONTENT)
+    }
     private fun wordsScreen() {
-        textAction(body, "‹ 홈") { guarded { go("home") } }
         body.addView(label(DemoDomain.categoryName(session.categoryId,session.topic), 12f, true, muted)); space(height = 8)
         heading("뜻밖의 세 단어를\n조합해 보세요.", "마음에 드는 단어는 최대 2개까지 고정해요.")
         val row = LinearLayout(this)
@@ -360,7 +478,7 @@ class MainActivity : Activity() {
         }
         textAction(body, "+ 내 단어 추가하기") { selectedCustom.clear(); go("custom") }
         space(); button(body, "이 조합으로 창조하기", true) { generate() }
-        body.addView(label(modeLabel() + " · 오류 시 규칙 결과로 자동 대체하지 않습니다.", 12f, color = muted))
+        body.addView(label(modeLabel() + " · 오류 시 임의 결과로 자동 대체하지 않습니다.", 12f, color = muted))
     }
     private fun generate(type: String = "generate", direction: String? = null) {
         pendingElaboration = type == "elaborate"
@@ -395,7 +513,6 @@ class MainActivity : Activity() {
     }
     private fun resultScreen() {
         val idea = session.current ?: run { homeScreen(); return }
-        textAction(body, "‹ 단어 조합") { guarded { go("words") } }
         body.addView(label(sourceLabel(idea.optString("source")), 11f, color = muted)); space(height = 12)
         heading(idea.optString("name", idea.optString("title")), idea.optString("one_liner"))
         wordTags()
@@ -420,16 +537,27 @@ class MainActivity : Activity() {
         body.addView(label("어떤 방향으로 다듬을까요?", 16f, true))
         space()
         val captions = listOf("새로운 관점을 더해서", "실행하기 쉬운 방향으로", "즐거운 경험을 더해서", "완성도와 가치를 높여서")
+        val key=idea.optString("id")+":"+idea.optInt("revision",1)
+        if(directionIdeaKey!=key) { selectedDirection=null; directionIdeaKey=key }
+        val directionButtons=mutableListOf<Pair<String,Button>>()
+        val confirmation=column().apply { visibility=if(selectedDirection==null) View.GONE else View.VISIBLE }
         DemoDomain.directions.chunked(2).forEachIndexed { rowIndex, entries ->
             val row = LinearLayout(this)
             entries.forEachIndexed { col, (id,title) ->
-                val item = button(row,title) { generate("develop",id) }.apply {
+                val item = button(row,title) {
+                    selectedDirection=id
+                    directionButtons.forEach { (choice,view) -> view.isSelected=choice==id; view.background=outlined(Color.WHITE,choice==id,16) }
+                    confirmation.visibility=View.VISIBLE
+                }.apply {
                     text = rich(Triple(title+"\n",14,ink),Triple(captions[rowIndex*2+col],11,muted)); minHeight=dp(82); setLineSpacing(dp(6).toFloat(),1f)
-                    background=outlined(Color.WHITE,idea.optString("direction")==id,16)
+                    isSelected=selectedDirection==id; background=outlined(Color.WHITE,selectedDirection==id,16)
                 }
+                directionButtons.add(id to item)
                 item.layoutParams=LinearLayout.LayoutParams(0,-2,1f).apply { bottomMargin=dp(9); if(col==0)rightMargin=dp(9) }
             }; body.addView(row)
         }
+        button(confirmation,"이 방식으로 다듬기",true) { selectedDirection?.let { generate("develop",it) } }
+        body.addView(confirmation)
         space()
         button(body, "이 아이디어 저장하기", true) { openSave() }
         button(body, if (idea.has("elaboration")) "구체화 내용 보기" else "한 걸음 더 구체화하기") {
@@ -456,7 +584,7 @@ class MainActivity : Activity() {
     }
     private fun openSave() {
         val idea = session.current ?: return
-        saveName = idea.optString("name", idea.optString("title")); saveFolder = idea.optString("folderId", "default"); nameOptions = emptyList(); go("save")
+        saveName = idea.optString("name").ifBlank { records().firstOrNull { it.optString("id")==idea.optString("id") }?.optString("name").orEmpty() }.ifBlank { AppStore.nextIdeaName(session.library.getJSONArray("ideas")) }; saveFolder = idea.optString("folderId", "default"); nameOptions = emptyList(); go("save")
     }
     private fun folders() = session.library.getJSONArray("folders").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
     private fun records() = session.library.getJSONArray("ideas").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
@@ -495,7 +623,7 @@ class MainActivity : Activity() {
         body.addView(label("✓",38f,true,green).apply { gravity=Gravity.CENTER; background=shape(ApplePalette.tint,40) },LinearLayout.LayoutParams(dp(80),dp(80)).apply { gravity=Gravity.CENTER_HORIZONTAL })
         space(height=28); heading("생각 하나를\n담았어요.","${session.current?.optString("name").orEmpty()}\n앱을 다시 열어도 이 기기에서 볼 수 있어요.")
         button(body,"보관함에서 확인하기",true) { session.filter=saveFolder; go("archive") }
-        button(body,"새 아이디어 만들기") { guarded { start(DemoDomain.categoryIds.random(),true) } }
+        button(body,"새 아이디어 만들기") { showTopicPicker() }
     }
     private fun archiveScreen() {
         heading("모아둔 생각들.", "저장한 아이디어 ${records().size}개 · 이 기기의 앱에 보관")
@@ -547,7 +675,7 @@ class MainActivity : Activity() {
     }
     private fun settingsScreen() {
         body.addView(label("CHOOSE YOUR ENGINE",11f,true,green)); space(height=8)
-        body.addView(label("생각을 만드는 방식",26f,true)); space()
+        body.addView(titleLabel("생각을 만드는 방식")); space()
         body.addView(label("규칙 시연, 이 기기의 AI, 클라우드 AI 중 직접 선택하세요.",14f,color=muted)); space(height=24)
         engineChoice("간편 시연","규칙 조합 · 즉시 사용 · AI 추론 없음",4,session.engine.mode=="demo") {
             session.engine.mode="demo"; session.preferences.edit().putString("mode","demo").apply(); render()
@@ -564,14 +692,6 @@ class MainActivity : Activity() {
             if(session.engine.localReady()) { session.engine.mode="local"; session.preferences.edit().putString("mode","local").apply(); go(if(session.current!=null) "result" else "home") } else session.prepare()
         }
         local.addView(label("llama.cpp · ${AiEngine.MODEL_LABEL}",11f,color=muted))
-        val cloud=settingsBox("클라우드 연결 설정")
-        val provider=providerName(session.engine.cloudProvider)
-        cloud.addView(label("$provider · ${if(session.engine.apiKey.isBlank()) "개인 API 키 입력 필요" else "키 입력 완료 · 실제 연결 미확인"}",14f)); space(cloud)
-        cloud.addView(label("${if(session.cloudConsent(session.engine.cloudProvider)) "전송·API 비용 동의 저장됨" else "전송·API 비용 동의 필요"} · 실패 시 규칙 시연으로 자동 전환하지 않아요.",12f,color=muted)); space(cloud)
-        button(cloud,"개인 API 키 설정") { openCloudKey() }
-        textAction(cloud,"메모리에서 키 지우기") {
-            session.engine.apiKey=""; if(session.engine.mode=="cloud") { session.engine.mode="demo"; session.preferences.edit().putString("mode","demo").apply() }; render()
-        }.isEnabled=session.engine.apiKey.isNotBlank()
         button(body, "설정 마치기") { go(if (session.current != null) "result" else "home") }
     }
     private fun providerName(provider: String) = if(provider=="gemini") "Google Gemini" else "OpenAI"
@@ -595,7 +715,7 @@ class MainActivity : Activity() {
     private fun cloudKeyScreen() {
         textAction(body,"‹ 생성 방식") { go("settings") }.apply { gravity=Gravity.START or Gravity.CENTER_VERTICAL; setPadding(0,dp(12),0,dp(12)) }
         body.addView(label("PERSONAL API KEY",11f,true,green)); space(height=8)
-        body.addView(label("개인 API 키 입력",26f,true)); space()
+        body.addView(titleLabel("개인 API 키 입력")); space()
         body.addView(label("제공업체와 키를 확인하고 설정을 저장하세요.",14f,color=muted)); space(height=24)
         val input=settingsBox("클라우드 AI 제공업체")
         val providerSelect=Spinner(this).apply {
@@ -606,7 +726,7 @@ class MainActivity : Activity() {
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
                 override fun onItemSelected(parent: AdapterView<*>?,view: View?,position: Int,id: Long) {
                     val next=if(position==0) "openai" else "gemini"
-                    if(next!=draftProvider) { draftProvider=next; draftKey=if(next==session.engine.cloudProvider) session.engine.apiKey else ""; draftConsent=session.cloudConsent(next); render() }
+                    if(next!=draftProvider) { cancelKeyVerification(); draftProvider=next; draftKey=if(next==session.engine.cloudProvider) session.engine.apiKey else ""; draftConsent=session.cloudConsent(next); render() }
                 }
             }
         }
@@ -619,21 +739,48 @@ class MainActivity : Activity() {
         val provider=providerName(draftProvider)
         input.addView(label("$provider · ${if(draftProvider=="gemini")GeminiApi.MODEL else "gpt-4.1-mini"}",11f,color=muted)); space(input)
         var saveButton: Button?=null
-        fun updateSaveButton() { saveButton?.apply { isEnabled=draftKey.isNotBlank() && draftConsent; alpha=if(isEnabled)1f else .45f } }
-        val key=field(input,"개인 API 키 · $provider",draftKey,512) { draftKey=it; updateSaveButton() }
+        var verifyButton: Button?=null
+        val verificationStatus=label("",13f,color=muted)
+        fun updateSaveButton() {
+            saveButton?.apply { isEnabled=!checkingKey && draftKey.isNotBlank() && draftConsent; alpha=if(isEnabled)1f else .45f }
+            verifyButton?.apply { isEnabled=!checkingKey && draftKey.isNotBlank() && draftConsent; text=if(checkingKey) "연결 확인 중…" else "Gemini 연결 확인 · 생성 없이" }
+        }
+        val key=field(input,"개인 API 키 · $provider",draftKey,if(draftProvider=="gemini")Int.MAX_VALUE else 512) { cancelKeyVerification(); verificationStatus.text=""; draftKey=it; updateSaveButton() }
         key.hint="선택한 제공업체의 키 · 저장하지 않음"; key.background=outlined(paper,false,12)
         key.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         key.isSaveEnabled=false; key.importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO
         input.addView(label("업체별 키는 서로 호환되지 않아요. 저장 전 돌아가면 변경 내용은 적용되지 않아요.",12f,color=muted))
+        if(draftProvider=="gemini") input.addView(label("AI Studio의 복사 버튼으로 전체 키를 복사하세요. 따옴표·변수 이름·가려진 키는 사용할 수 없어요. 긴 키도 자동으로 자르지 않아요.",12f,color=muted))
         val agreement=settingsBox("전송·비용 안내")
         agreement.addView(label("세 단어, 입력 주제·분야, 조건, 현재 아이디어와 발전 방향이 $provider 로 전송돼요. API 사용 비용이 발생할 수 있으며 취소 전 처리된 요청에도 비용이 생길 수 있어요. 제공업체별 데이터 정책이 적용돼요.",14f).apply { setLineSpacing(0f,1.6f) }); space(agreement)
         agreement.addView(CheckBox(this).apply {
             text="$provider 전송과 API 비용에 동의합니다"; contentDescription="전송·API 비용 동의"; textSize=14f; setTextColor(ink); buttonTintList=ColorStateList.valueOf(green); minHeight=dp(48)
             isChecked=draftConsent; isSaveEnabled=false
-            setOnCheckedChangeListener { _,checked -> draftConsent=checked; updateSaveButton() }
+            setOnCheckedChangeListener { _,checked -> cancelKeyVerification(); verificationStatus.text=""; draftConsent=checked; updateSaveButton() }
         })
         space(agreement)
         agreement.addView(label("저장한 동의는 제공업체별로 유지돼요. 키는 앱 메모리에만 두며 앱 프로세스 종료 시 사라져요. 공용 키를 배포하지 마세요.",12f,color=muted))
+        if(draftProvider=="gemini") {
+            verifyButton=button(body,"Gemini 연결 확인 · 생성 없이") {
+                val supplied=GeminiApi.normalizeKey(draftKey)
+                check(draftConsent) { "전송·API 비용 안내 동의를 먼저 확인하세요." }
+                val ticket=++keyCheckTicket
+                checkingKey=true; verificationStatus.text="Google에 키 인증과 모델 정보를 확인하는 중…"; updateSaveButton()
+                Thread({
+                    val result=runCatching { GeminiApi.verifyKey(supplied) { connection ->
+                        if(ticket==keyCheckTicket) keyCheckConnection=connection else connection?.disconnect()
+                    } }
+                    runOnUiThread {
+                        if(!isDestroyed && ticket==keyCheckTicket && session.screen=="cloud-key") {
+                            checkingKey=false; keyCheckConnection=null
+                            verificationStatus.text=result.getOrElse { it.message ?: "Google Gemini 연결 확인에 실패했습니다." }
+                            updateSaveButton()
+                        }
+                    }
+                },"gemini-key-check").apply { isDaemon=true; start() }
+            }
+            body.addView(verificationStatus); space()
+        }
         saveButton=button(body,"설정 저장하기",true) {
             session.saveCloudSettings(draftProvider,draftKey,draftConsent)
             go("settings"); Toast.makeText(this,"클라우드 설정을 저장했어요. 키 인증은 생성 시 확인해요.",Toast.LENGTH_LONG).show()
@@ -701,6 +848,14 @@ class MainActivity : Activity() {
             } else if (kind == 3) {
                 canvas.drawRoundRect(2f,4f,22f,20f,3f,3f,paint)
                 path.moveTo(9f,9f); path.lineTo(6f,12f); path.lineTo(9f,15f); path.moveTo(15f,9f); path.lineTo(18f,12f); path.lineTo(15f,15f)
+            } else if(kind==7) {
+                path.moveTo(19f,12f);path.lineTo(5f,12f);path.moveTo(11f,6f);path.lineTo(5f,12f);path.lineTo(11f,18f)
+            } else if(kind==8) {
+                path.moveTo(9f,6f);path.lineTo(15f,12f);path.lineTo(9f,18f)
+            } else if(kind==9) {
+                path.moveTo(4f,16f);path.lineTo(16f,4f);path.lineTo(20f,8f);path.lineTo(8f,20f);path.lineTo(3f,21f);path.close();path.moveTo(14f,6f);path.lineTo(18f,10f)
+            } else if(kind==10) {
+                path.moveTo(6f,6f);path.lineTo(18f,18f);path.moveTo(18f,6f);path.lineTo(6f,18f)
             } else if(kind==5) {
                 canvas.drawRoundRect(5f,5f,19f,19f,3f,3f,paint)
                 canvas.drawRoundRect(9f,9f,15f,15f,1f,1f,paint)
