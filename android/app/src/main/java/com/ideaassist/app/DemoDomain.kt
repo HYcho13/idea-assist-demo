@@ -37,7 +37,8 @@ object DemoDomain {
         }
         return selected
     }
-    fun generate(categoryId: String, words: List<String>, condition: String, current: JSONObject? = null, direction: String? = null, type: String = "generate"): JSONObject {
+    fun generate(categoryId: String, words: List<String>, condition: String, current: JSONObject? = null, direction: String? = null, type: String = "generate", topic: String = ""): JSONObject {
+        UserCondition.validate(condition)
         val (a, b, c) = words
         if (type == "elaborate") return JSONObject().put("target_user", "${if(categoryId=="custom") current?.optString("topic").orEmpty()+" 분야에서 " else ""}$a 관련 경험을 더 간편하게 만들고 싶은 소규모 사용자입니다.")
             .put("problem", "$a 경험을 시작할 때 필요한 정보와 도구가 흩어져 있다는 가설을 확인합니다.")
@@ -50,7 +51,7 @@ object DemoDomain {
         val action = when (categoryId) { "food" -> "$a 재료를 중심으로 새로운 메뉴를 구성"; "program" -> "$a 기록을 정리하는 작은 앱을 구성"; "custom" -> "$a 소재를 이용해 작은 경험의 견본을 구성"; else -> "$a 문제를 함께 살펴보는 참여 활동을 구성" }
         return JSONObject().put("title", if (direction == null) title else "$title · $directionText")
             .put("one_liner", "$b 방식을 통해 $a 경험에 $c 분위기를 더하는 작은 제안입니다.")
-            .put("description", "$action 합니다. $b 방식을 이용해 사용자에게 전달하고, $c 느낌의 디자인과 안내를 적용합니다. $directionText 방향으로 첫 경험을 시험합니다.${if (condition.isBlank()) "" else " 조건: $condition"}")
+            .put("description", "$action 합니다. $b 방식을 이용해 사용자에게 전달하고, $c 느낌의 디자인과 안내를 적용합니다. $directionText 방향으로 첫 경험을 시험합니다.${if (topic.isBlank()) "" else " 주제: $topic."}${if (condition.isBlank()) "" else " 입력 조건(기록용): $condition"}")
             .put("steps", JSONArray(listOf("$a 관련 필요를 사용자 세 명에게 질문하고 정리하기", "$b 방식을 종이 또는 작은 시제품으로 만들어 시험하기", "$c 분위기를 적용한 결과를 보여주고 개선점 기록하기")))
             .put("word_links", JSONObject().put("material", "$a 단어를 핵심 소재와 사용자 필요로 연결합니다.").put("method", "$b 단어를 전달 방식과 사용 흐름으로 연결합니다.").put("mood", "$c 단어를 디자인과 참여 분위기로 연결합니다."))
             .put("source", "rules").put("model", "explicit-rules-demo")

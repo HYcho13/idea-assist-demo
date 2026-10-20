@@ -1,4 +1,5 @@
 import { categories, wordPools, conditions, directions } from './data.js'
+import { validateCondition } from './condition.js'
 
 export const uid = () => globalThis.crypto?.randomUUID?.() || `idea-${Date.now()}-${Math.random().toString(36).slice(2)}`
 export const normalize = value => value.normalize('NFKC').trim().replace(/\s+/g, ' ')
@@ -46,6 +47,7 @@ export function validateIdea(value, words) {
 // This is a rule-based demonstration engine, explicitly labelled in the UI.
 // Actual neural generation lives in ai.js; a failed AI call never silently uses these templates.
 export function composeIdea({ categoryId, words, condition, variant = 0, topic = '' }) {
+  condition = validateCondition(condition)
   if (words.length !== 3 || new Set(words).size !== 3) throw new Error('서로 다른 단어 3개가 필요해요.')
   const [a, b, c] = words
   const category = categoryId === 'custom' && topic.trim() ? { name: topic } : categories.find(x => x.id === categoryId)

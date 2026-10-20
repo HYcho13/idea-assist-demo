@@ -54,7 +54,7 @@ class AppSession private constructor(context: Context) {
             val validDraft = restoredWords != null && validLocks && validCategory
             words = if (validDraft) restoredWords!! else DemoDomain.draw(categoryId, emptyList(), emptySet(), emptyList(), false)
             if (validDraft) repeat(restoredLocks!!.length()) { locks.add(restoredLocks.getInt(it)) }
-            condition = draft.optString("condition").take(160)
+            condition = draft.optString("condition").takeIf { runCatching { UserCondition.validate(it) }.isSuccess } ?: ""
             useCustom = draft.optBoolean("useCustom", true)
             current = if (validDraft) draft.optJSONObject("idea")?.let { AppStore.cleanIdea(it) } else null
             current?.let { idea ->
@@ -79,6 +79,7 @@ class AppSession private constructor(context: Context) {
         engine.apiKey=clean; engine.mode="cloud"
     }
     fun persist() {
+        UserCondition.validate(condition)
         val snapshot = JSONObject(library.toString())
         snapshot.put("draft", JSONObject().put("categoryId", categoryId).put("topic",topic).put("words", JSONArray(words)).put("locks", JSONArray(locks.toList())).put("condition", condition).put("useCustom", useCustom).put("idea", current?.let { AppStore.cleanIdea(it) } ?: JSONObject.NULL).put("dirty", dirty))
         store.write(snapshot)
@@ -100,6 +101,8 @@ class AppSession private constructor(context: Context) {
     }
     fun generate(type: String = "generate", direction: String? = null) {
         if (busy) return
+        val conditionFailure=runCatching { UserCondition.validate(if(type=="generate") condition else current?.optString("condition") ?: condition) }.exceptionOrNull()
+        if(conditionFailure!=null) { error=conditionFailure.message.orEmpty(); notifyChanged(); return }
         if (engine.mode == "local" && !engine.localReady()) {
             error = "로컬 AI 모델이 아직 없습니다. AI 설정에서 모델을 내려받거나 직접 입력한 클라우드 키를 사용해 주세요."
             notifyChanged(); return
@@ -115,14 +118,14 @@ class AppSession private constructor(context: Context) {
         val inputWords = words.toList()
         val inputCategory = categoryId
         val inputTopic = if(inputCategory=="custom") DemoDomain.topic(topic) else ""
-        val inputCondition = condition
+        val inputCondition = UserCondition.validate(if(type=="generate") condition else current?.optString("condition") ?: condition)
         val before = current?.let { JSONObject(it.toString()) }
         val mode = engine.mode
         val model = engine.cloudModel
         val providerDirection = direction?.let { id -> DemoDomain.directions.firstOrNull { it.first == id }?.second ?: id }
         launch(if (type == "elaborate") "아이디어를 구체화하고 있습니다…" else "세 단어를 아이디어로 연결하고 있습니다…") { progress ->
             val category = DemoDomain.categoryName(inputCategory,inputTopic)
-            val output = if (mode == "demo") DemoDomain.generate(inputCategory, inputWords, if(inputTopic.isNotBlank()) "주제: $inputTopic · $inputCondition" else inputCondition, before, direction, type)
+            val output = if (mode == "demo") DemoDomain.generate(inputCategory, inputWords, inputCondition, before, direction, type, topic = inputTopic)
                 else engine.generate(inputCategory, category, inputWords, inputCondition, if (type == "generate") null else before, providerDirection, type, progress)
             val source = when (mode) { "demo" -> "rules"; "cloud" -> if(engine.cloudProvider=="gemini") "gemini" else "cloud"; else -> "native-llama" }
             val modelName = output.optString("model").ifBlank { when (mode) { "demo" -> "explicit-rules-demo"; "cloud" -> model; else -> AiEngine.MODEL_LABEL } }

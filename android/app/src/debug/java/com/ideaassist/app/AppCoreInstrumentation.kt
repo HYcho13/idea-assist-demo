@@ -34,6 +34,11 @@ class AppCoreInstrumentation : Instrumentation() {
         var originalStore: AppStore?=null
         var originalLibrary: JSONObject?=null
         try {
+            check(UserCondition.validate("")=="")
+            check(UserCondition.validate("가".repeat(100)).length==100)
+            check(UserCondition.validate("  1인 가구를 위한 서비스  ")=="1인 가구를 위한 서비스")
+            listOf("가".repeat(101),"a\u0000b","a\nb","\u202etext","\ud800").forEach { check(runCatching { UserCondition.validate(it) }.isFailure) }
+            passed.put("optional_condition_100_limit_control_bidi_unicode_validation")
             for (category in DemoDomain.categoryIds) repeat(50) {
                 val first = DemoDomain.draw(category, emptyList(), emptySet(), emptyList(), false)
                 val next = DemoDomain.draw(category, first, setOf(0, 1), emptyList(), false)
@@ -194,6 +199,7 @@ class AppCoreInstrumentation : Instrumentation() {
                 }
                 check(activity.topicDialog==null && session.screen=="words")
                 check(!session.busy && session.current==null && session.error.isBlank() && !session.dirty)
+                check(session.condition.isEmpty())
                 check(session.categoryId==if(index<3) DemoDomain.categoryIds[index] else "custom")
                 if(index==3) check(session.topic=="반려동물과 함께하는 여행")
                 runOnMainSync {
@@ -217,6 +223,16 @@ class AppCoreInstrumentation : Instrumentation() {
             }
             passed.put("native_plus_four_topics_words_first_no_cloud_call_lock_reroll_then_explicit_generation_cancel_preserves_state")
             click("선택하고 시작하기")
+            val enteredCondition="1인 가구를 위한 서비스"
+            runOnMainSync {
+                val input=walk(activity.window.decorView).filterIsInstance<EditText>().single { it.contentDescription=="아이디어 생성 조건 · 선택" }
+                check(input.text.isEmpty())
+                input.setText("가".repeat(101)); check(input.text.length==100)
+                input.setText(enteredCondition)
+                check(session.condition==enteredCondition)
+                check(session.library.getJSONObject("draft").getString("condition")==enteredCondition)
+                check(walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().any { it.text.toString()=="${enteredCondition.length}/100" })
+            }
             runOnMainSync {
                 val title=walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().single { it.text.toString().startsWith("뜻밖의 세 단어를\n") }
                 val expected=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,41f,targetContext.resources.displayMetrics).toInt()
@@ -233,9 +249,13 @@ class AppCoreInstrumentation : Instrumentation() {
             val before = session.words.toList()
             click("다시 뽑기")
             check(session.words.take(2) == before.take(2) && session.words[2] != before[2])
+            check(session.condition==enteredCondition)
             click("이 조합으로 창조하기")
             await { !session.busy && session.current != null }
             check(session.current!!.getString("source") == "rules")
+            check(session.current!!.getString("condition")==enteredCondition)
+            runOnMainSync { check(walk(activity.window.decorView).filterIsInstance<android.widget.TextView>().any { it.text.toString()==enteredCondition }) }
+            passed.put("native_condition_input_count_reroll_draft_and_result_snapshot")
             val beforeLeave=session.current!!.toString()
             fun clickLeave(title: String) {
                 runOnMainSync {

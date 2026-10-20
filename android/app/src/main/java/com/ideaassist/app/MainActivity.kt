@@ -388,7 +388,7 @@ class MainActivity : Activity() {
     private fun start(id: String, topic: String = "") {
         session.categoryId = id; session.topic = topic; session.locks.clear()
         session.words = DemoDomain.draw(id, emptyList(), emptySet(), emptyList(), false)
-        session.condition = listOf("기존 재료와 도구로 작게 시작하기", "일주일 안에 작은 시제품 시험하기", "처음 보는 사람도 쉽게 이해할 수 있게 만들기", "한 사람이 혼자서도 사용할 수 있게 만들기").random()
+        session.condition = ""
         session.current = null; session.prior = null; session.dirty = false; session.screen = "words"
         persist(); render()
     }
@@ -506,8 +506,20 @@ class MainActivity : Activity() {
             row.addView(item, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i < 2) rightMargin = dp(8) })
         }
         body.addView(row); space()
-        val condition = column().apply { background = shape(ApplePalette.tint,16); setPadding(dp(15),dp(15),dp(15),dp(15)) }
-        condition.addView(label("이번 조합의 조건",11f,color=muted)); space(condition,6); condition.addView(label(session.condition,13f)); body.addView(condition); space()
+        val conditionPanel = column().apply { background = shape(Color.WHITE,20); setPadding(dp(16),dp(16),dp(16),dp(16)) }
+        val conditionCount = label("${session.condition.length}/100",12f,color=muted).apply { gravity=Gravity.END; contentDescription="조건 글자 수 ${session.condition.length}/100" }
+        lateinit var conditionInput: EditText
+        conditionInput = field(conditionPanel, "아이디어 생성 조건 · 선택", session.condition, UserCondition.MAX_LENGTH) { value ->
+            session.condition=value
+            conditionCount.text="${value.length}/100"; conditionCount.contentDescription="조건 글자 수 ${value.length}/100"
+            val failure=runCatching { UserCondition.validate(value) }.exceptionOrNull()
+            conditionInput.error=failure?.message
+            if(failure==null) attempt { persist() }
+        }
+        conditionInput.hint="예: 1인 가구를 위한 서비스"
+        conditionInput.imeOptions=android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        conditionPanel.addView(label("비워 두어도 생성할 수 있어요.",12f,color=muted)); conditionPanel.addView(conditionCount)
+        body.addView(conditionPanel); space()
         button(body, "다시 뽑기") {
             session.words = DemoDomain.draw(session.categoryId, session.words, session.locks, emptyList(), false)
             persist(); render()
@@ -517,6 +529,8 @@ class MainActivity : Activity() {
         body.addView(label(modeLabel() + " · 오류 시 임의 결과로 자동 대체하지 않습니다.", 12f, color = muted))
     }
     private fun generate(type: String = "generate", direction: String? = null) {
+        val conditionFailure=runCatching { UserCondition.validate(if(type=="generate") session.condition else session.current?.optString("condition") ?: session.condition) }.exceptionOrNull()
+        if(conditionFailure!=null) { Toast.makeText(this,conditionFailure.message,Toast.LENGTH_LONG).show(); return }
         pendingElaboration = type == "elaborate"
         session.generate(type, direction)
         if (!session.busy && session.error.isNotBlank()) {
@@ -552,6 +566,7 @@ class MainActivity : Activity() {
         body.addView(label(sourceLabel(idea.optString("source")), 11f, color = muted)); space(height = 12)
         heading(idea.optString("name", idea.optString("title")), idea.optString("one_liner"))
         wordTags()
+        card("입력한 생성 조건", idea.optString("condition").ifBlank { "입력한 조건 없음" })
         val content = column().apply { background = shape(Color.WHITE,20); setPadding(dp(20),dp(20),dp(20),dp(20)) }
         content.addView(label("아이디어 설명",13f,true,muted)); space(content,10)
         content.addView(label(idea.optString("description"),15f).apply { setLineSpacing(0f,1.65f); setTextIsSelectable(true) }); space(content,20)
@@ -612,6 +627,7 @@ class MainActivity : Activity() {
         body.addView(label(sourceLabel(idea.optString("elaborationSource")), 12f, true, green))
         heading("아이디어를\n한 걸음 더", idea.optString("title"))
         wordTags()
+        card("입력한 생성 조건", idea.optString("condition").ifBlank { "입력한 조건 없음" })
         listOf("target_user" to "누구를 위한 아이디어인가", "problem" to "어떤 불편을 해결하나", "value" to "이 조합의 가치").forEach { (key, name) -> card(name, detail.getString(key)) }
         card("핵심 기능 3개", arrayText(detail.getJSONArray("core_features")))
         card("첫 프로토타입", detail.getString("first_prototype")); card("먼저 확인할 위험", arrayText(detail.getJSONArray("risks")))

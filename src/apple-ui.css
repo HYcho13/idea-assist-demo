@@ -218,6 +218,17 @@ progress { accent-color: #007aff; }
 .topic-start { margin: 24px 0; padding: 18px; background: #fff; border-radius: 20px; }
 .topic-start .hint { text-align: left; line-height: 1.6; margin: 10px 0 14px; }
 .topic-start .primary { margin: 0; }
+.condition-entry { background: white; border-radius: 20px; padding: 16px; margin-bottom: 18px; }
+.condition-entry .field { margin: 0 0 10px; }
+.condition-entry input { font: inherit; font-size: 16px; min-height: 48px; width: 100%; border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: white; }
+.optional-label { color: var(--muted); font-size: 12px; font-weight: 400; }
+.condition-meta { display: flex; gap: 12px; justify-content: space-between; color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 8px; }
+.condition-meta p { margin: 0; }
+.condition-meta span { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.condition-error { color: #b42318; font-size: 13px; line-height: 1.6; margin: 8px 0 0; }
+.condition-error:empty { display: none; }
+.condition-summary { margin: 0 0 18px; overflow-wrap: anywhere; }
+.condition-summary p { margin: 0; }
 .field select { width: 100%; min-height: 48px; padding: 12px; border: 1px solid #e5e5ea; border-radius: 12px; font: inherit; font-size: 16px; background: #fff; color: #1c1c1e; }
 /* A scrollable dialog keeps all actions reachable when the mobile keyboard opens. */
 .topic-picker .muted { margin-bottom: 20px; }
