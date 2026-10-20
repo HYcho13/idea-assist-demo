@@ -39,6 +39,16 @@ class AppCoreInstrumentation : Instrumentation() {
             check(UserCondition.validate("  1인 가구를 위한 서비스  ")=="1인 가구를 위한 서비스")
             listOf("가".repeat(101),"a\u0000b","a\nb","\u202etext","\ud800").forEach { check(runCatching { UserCondition.validate(it) }.isFailure) }
             passed.put("optional_condition_100_limit_control_bidi_unicode_validation")
+            check(GenerationFeedback.elapsedSeconds(1000,10999)==9L)
+            check(GenerationFeedback.elapsedSeconds(1000,11000)==10L)
+            check(GenerationFeedback.elapsedSeconds(1000,900)==0L)
+            check(GenerationFeedback.message(10,true).contains("제공업체"))
+            check(GenerationFeedback.message(30,true).contains("취소"))
+            val latencyConfig=GeminiApi.request("system","prompt",JSONObject().put("type","object")).getJSONObject("generationConfig")
+            check(latencyConfig.getJSONObject("thinkingConfig").getString("thinkingLevel")=="low")
+            check(latencyConfig.getInt("maxOutputTokens")==4096)
+            check(AiEngine(targetContext).compactGuidance(false).contains("description은 60~160자"))
+            passed.put("low_thinking_compact_guidance_and_monotonic_wait_feedback")
             for (category in DemoDomain.categoryIds) repeat(50) {
                 val first = DemoDomain.draw(category, emptyList(), emptySet(), emptyList(), false)
                 val next = DemoDomain.draw(category, first, setOf(0, 1), emptyList(), false)

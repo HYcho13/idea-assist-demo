@@ -180,11 +180,14 @@ class AiEngine(context: Context) : AutoCloseable {
             "더 간단하게" -> "사용 단계를 줄이고 첫 사용자 행동 하나를 중심으로 다시 설명한다. 기존 설명을 복사하지 않는다."
             else -> "요청한 방향에 따른 구체적인 변경을 설명과 실행 단계에 반영한다. 기존 설명을 복사하지 않는다."
         })
-        val prompt = "아래는 내용이 아닌 연결 방식과 JSON 형식을 참고하는 예시다. 예시의 단어를 이번 결과에 복사하지 마라.\n${example(elaborate, categoryId)}\n" +
+        val compactCloud = mode == "cloud" && cloudProvider == "gemini"
+        val examplePrefix = if(compactCloud) "" else "아래는 내용이 아닌 연결 방식과 JSON 형식을 참고하는 예시다. 예시의 단어를 이번 결과에 복사하지 마라.\n${example(elaborate, categoryId)}\n"
+        val prompt = examplePrefix +
             "이번 실제 입력: $data\n출력 필드: ${schema.getJSONObject("properties").keys().asSequence().joinToString(",")}\n" +
             "제목 4~40자, 설명 40~160자로 완결된 두 문장. 다른 항목도 짧지만 완결된 문장으로 쓴다. " +
-            if (elaborate) "core_features는 서로 다른 실제 기능 3개, risks는 위험 1~3개다. 현재 아이디어에 맞는 사용자와 첫 시제품을 구체적으로 작성하라. 전체 1000토큰 이내."
-            else "steps는 서로 다른 실행 작업 3개다. word_links.material에 ${words[0]}, method에 ${words[1]}, mood에 ${words[2]} 단어를 반드시 직접 넣고 각각 어떻게 활용하는지 설명하라. 발전 요청에서는 기존 핵심을 유지하면서 지정 방향에 맞는 실제 방법을 바꾸고 실행 단계도 적어도 하나는 새 행동으로 작성하라. 전체 1000토큰 이내."
+            (if (elaborate) "core_features는 서로 다른 실제 기능 3개, risks는 위험 1~3개다. 현재 아이디어에 맞는 사용자와 첫 시제품을 구체적으로 작성하라. 전체 1000토큰 이내."
+            else "steps는 서로 다른 실행 작업 3개다. word_links.material에 ${words[0]}, method에 ${words[1]}, mood에 ${words[2]} 단어를 반드시 직접 넣고 각각 어떻게 활용하는지 설명하라. 발전 요청에서는 기존 핵심을 유지하면서 지정 방향에 맞는 실제 방법을 바꾸고 실행 단계도 적어도 하나는 새 행동으로 작성하라. 전체 1000토큰 이내.") +
+            if(compactCloud) compactGuidance(elaborate) else ""
         val selectedMode = mode
         val result = when (selectedMode) {
             "local" -> localGenerate(prompt, elaborate, words, current, type, progress)
@@ -196,6 +199,10 @@ class AiEngine(context: Context) : AutoCloseable {
         validateTask(result, elaborate, words, current, type)
         return result
     }
+
+    internal fun compactGuidance(elaborate: Boolean): String = if(elaborate)
+        "\n간결한 한국어로 작성한다. target_user, problem, value는 각각 30~70자 한 문장, core_features는 각각 15~40자 세 개, first_prototype은 40~90자, risks는 각각 20~50자로 1~2개다. 반복·서론·맺음말 없이 주제·세 단어·입력 조건과 모든 필수 JSON 필드를 유지한다."
+        else "\n간결한 한국어로 작성한다. title은 4~32자, one_liner는 20~60자 한 문장, description은 60~160자 두 문장, steps는 각각 15~45자 세 개, word_links는 각각 12~45자다. 반복·서론·맺음말 없이 주제·세 단어·입력 조건과 모든 필수 JSON 필드를 유지한다."
 
     internal fun validateTask(result: JSONObject, elaborate: Boolean, words: List<String>, current: JSONObject?, type: String) {
         validate(result, elaborate)

@@ -25,12 +25,12 @@ export function geminiError(status, payload) {
   return `Google Gemini 서비스 요청 실패 (HTTP ${status}). 잠시 후 다시 시도해 주세요.`
 }
 export function geminiRequest(args) {
-  const messages = buildMessages(args)
+  const messages = buildMessages({ ...args, compact: true })
   return {
     systemInstruction: { parts: [{ text: messages[0].content }] },
     contents: [{ role: 'user', parts: [{ text: messages.at(-1).content }] }],
     // TextResponseFormat.MimeType is a protobuf enum, not a MIME string.
-    generationConfig: { maxOutputTokens: 4096, responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: schemaFor(args.type) } } },
+    generationConfig: { thinkingConfig: { thinkingLevel: 'low' }, maxOutputTokens: 4096, responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: schemaFor(args.type) } } },
   }
 }
 export function parseGemini(payload) {

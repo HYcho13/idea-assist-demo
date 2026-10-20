@@ -45,7 +45,7 @@ internal object GeminiApi {
         .put("systemInstruction",JSONObject().put("parts",JSONArray().put(JSONObject().put("text",system))))
         .put("contents",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",prompt)))))
         // TextResponseFormat.MimeType is an enum, not a literal MIME string.
-        .put("generationConfig",JSONObject().put("maxOutputTokens",4096).put("responseFormat",JSONObject().put("text",JSONObject().put("mimeType","APPLICATION_JSON").put("schema",schema))))
+        .put("generationConfig",JSONObject().put("thinkingConfig",JSONObject().put("thinkingLevel","low")).put("maxOutputTokens",4096).put("responseFormat",JSONObject().put("text",JSONObject().put("mimeType","APPLICATION_JSON").put("schema",schema))))
     /** Only fixed messages are returned. Provider bodies can echo keys or private input. */
     fun errorMessage(code: Int, payload: JSONObject? = null): String {
         val error=payload?.optJSONObject("error")

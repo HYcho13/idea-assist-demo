@@ -30,6 +30,10 @@ class AppSession private constructor(context: Context) {
     var search = ""
     var busy = false
         private set
+    var startedAt = 0L
+        private set
+    var operationKind = "generate"
+        private set
     var status = ""
         private set
     var error = store.loadError ?: ""
@@ -95,7 +99,7 @@ class AppSession private constructor(context: Context) {
         status = "작업을 취소했습니다."
         notifyChanged()
     }
-    fun prepare() = launch("로컬 AI 모델을 준비하고 있습니다…") { progress ->
+    fun prepare() = launch("로컬 AI 모델을 준비하고 있습니다…", "prepare") { progress ->
         engine.prepareLocal(progress)
         null
     }
@@ -123,7 +127,7 @@ class AppSession private constructor(context: Context) {
         val mode = engine.mode
         val model = engine.cloudModel
         val providerDirection = direction?.let { id -> DemoDomain.directions.firstOrNull { it.first == id }?.second ?: id }
-        launch(if (type == "elaborate") "아이디어를 구체화하고 있습니다…" else "세 단어를 아이디어로 연결하고 있습니다…") { progress ->
+        launch(if (type == "elaborate") "아이디어를 구체화하고 있습니다…" else "세 단어를 아이디어로 연결하고 있습니다…", type) { progress ->
             val category = DemoDomain.categoryName(inputCategory,inputTopic)
             val output = if (mode == "demo") DemoDomain.generate(inputCategory, inputWords, inputCondition, before, direction, type, topic = inputTopic)
                 else engine.generate(inputCategory, category, inputWords, inputCondition, if (type == "generate") null else before, providerDirection, type, progress)
@@ -146,9 +150,10 @@ class AppSession private constructor(context: Context) {
             }
         }
     }
-    private fun launch(initialStatus: String, task: ((String) -> Unit) -> JSONObject?) {
+    private fun launch(initialStatus: String, kind: String = "generate", task: ((String) -> Unit) -> JSONObject?) {
         if (busy) return
         val ticket = ++operation
+        startedAt = android.os.SystemClock.elapsedRealtime(); operationKind = kind
         busy = true; status = initialStatus; error = ""
         notifyChanged()
         future = executor.submit {
