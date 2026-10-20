@@ -30,8 +30,6 @@ class AppSession private constructor(context: Context) {
     var search = ""
     var busy = false
         private set
-    var startedAt = 0L
-        private set
     var operationKind = "generate"
         private set
     var status = ""
@@ -153,7 +151,7 @@ class AppSession private constructor(context: Context) {
     private fun launch(initialStatus: String, kind: String = "generate", task: ((String) -> Unit) -> JSONObject?) {
         if (busy) return
         val ticket = ++operation
-        startedAt = android.os.SystemClock.elapsedRealtime(); operationKind = kind
+        operationKind = kind
         busy = true; status = initialStatus; error = ""
         notifyChanged()
         future = executor.submit {

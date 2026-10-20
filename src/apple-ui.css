@@ -229,14 +229,13 @@ progress { accent-color: #007aff; }
 .condition-error:empty { display: none; }
 .condition-summary { margin: 0 0 18px; overflow-wrap: anywhere; }
 .condition-summary p { margin: 0; }
-.generation-progress { width: 100%; padding: 16px; border-radius: 18px; background: white; margin: 8px 0 12px; }
-.loading-page .spark-loader { width: 48px; height: 48px; margin: 10px 0 14px; }
+.generation-progress { width: 100%; margin: 20px 0 12px; }
+.generation-spinner { display: block; width: 48px; height: 48px; margin: 0 auto; border: 3px solid var(--line); border-top-color: #007aff; border-radius: 50%; animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .generation-spinner { animation: none; }
+}
 .loading-page .word-tags { margin: 10px 0; }
-.waiting-provider { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
-.elapsed-time { color: var(--ink); font-size: 14px; margin: 0 0 10px; }
-.elapsed-time span { margin-left: 6px; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.waiting-message { font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0; }
-.waiting-note { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 10px 0 0; }
+.waiting-note { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 20px 0 0; }
 .field select { width: 100%; min-height: 48px; padding: 12px; border: 1px solid #e5e5ea; border-radius: 12px; font: inherit; font-size: 16px; background: #fff; color: #1c1c1e; }
 /* A scrollable dialog keeps all actions reachable when the mobile keyboard opens. */
 .topic-picker .muted { margin-bottom: 20px; }

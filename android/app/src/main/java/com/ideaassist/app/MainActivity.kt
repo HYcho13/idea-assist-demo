@@ -45,22 +45,6 @@ class MainActivity : Activity() {
     private lateinit var body: LinearLayout
     private lateinit var root: LinearLayout
     private var progressText: TextView? = null
-    private var elapsedText: TextView? = null
-    private var waitingText: TextView? = null
-    private val waitingHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val waitingTick = object : Runnable {
-        override fun run() {
-            if(!session.busy || isFinishing || isDestroyed) return
-            updateWaitingFeedback()
-            waitingHandler.postDelayed(this,1000)
-        }
-    }
-    private fun updateWaitingFeedback() {
-        val seconds=GenerationFeedback.elapsedSeconds(session.startedAt,android.os.SystemClock.elapsedRealtime())
-        elapsedText?.text="경과 시간 ${seconds}초"
-        val message=if(session.operationKind=="prepare") "모델 준비 작업을 진행 중이에요. 다운로드·로딩 시간은 기기에 따라 달라요." else GenerationFeedback.message(seconds,session.engine.mode=="cloud")
-        if(waitingText?.text?.toString()!=message) waitingText?.text=message
-    }
     private var listener: ((String) -> Unit)? = null
     private val selectedCustom = linkedSetOf<String>()
     private var saveName = ""
@@ -103,13 +87,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) onBackInvokedDispatcher.registerOnBackInvokedCallback(0) { back() }
         render()
     }
-    override fun onStart() {
-        super.onStart()
-        if(::session.isInitialized && session.busy) { waitingHandler.removeCallbacks(waitingTick); waitingHandler.post(waitingTick) }
-    }
-    override fun onStop() { waitingHandler.removeCallbacks(waitingTick); super.onStop() }
     override fun onDestroy() {
-        waitingHandler.removeCallbacks(waitingTick)
         cancelKeyVerification()
         topicDialog?.dismiss()
         leaveDialog?.dismiss()
@@ -294,7 +272,6 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
-        waitingHandler.removeCallbacks(waitingTick); elapsedText=null; waitingText=null
         root = column().apply { setBackgroundColor(paper) }
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(12), dp(24), dp(8)) }
         val stage = mapOf("home" to "홈", "words" to "단어 조합", "custom" to "내 단어", "result" to "아이디어", "elaborate" to "구체화", "save" to "저장", "saved" to "저장 완료", "archive" to "보관함", "settings" to "생성 방식", "cloud-key" to "개인 API 키")
@@ -314,18 +291,23 @@ class MainActivity : Activity() {
         progressText = null
         if (session.busy) {
             val title=when(session.operationKind) { "prepare" -> "모델을\n준비하고 있어요"; "develop" -> "아이디어를\n다듬고 있어요"; "elaborate" -> "한 걸음 더\n구체화하고 있어요"; else -> "새로운 연결을\n찾고 있어요" }
-            heading(title, if(session.engine.mode=="cloud") "AI 제공업체의 응답을 기다리고 있어요." else "기기 성능에 따라 시간이 걸릴 수 있어요.")
-            body.addView(ProgressBar(this)); space()
-            progressText = label(session.status, 15f).also { body.addView(it) }
+            heading(title)
             space()
-            val waitCard=column().apply { background=shape(Color.WHITE,18); setPadding(dp(16),dp(16),dp(16),dp(16)) }
-            elapsedText=label("",20f,true).also { it.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_NONE; waitCard.addView(it) }
-            space(waitCard,10)
-            waitingText=label("",14f).also { it.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE; waitCard.addView(it) }
-            space(waitCard,10)
-            waitCard.addView(label("진행률이 아닌 실제 대기 시간이에요."+if(session.engine.mode=="cloud") " 취소해도 이미 처리된 요청에는 비용이 발생할 수 있어요." else "",12f,color=muted))
-            body.addView(waitCard); space()
-            updateWaitingFeedback(); waitingHandler.postDelayed(waitingTick,1000)
+            val spinner = ProgressBar(this).apply {
+                isIndeterminate = true
+                indeterminateTintList = ColorStateList.valueOf(green)
+                contentDescription = if(session.operationKind=="prepare") "모델을 준비하고 있어요." else "AI 응답을 기다리고 있어요."
+            }
+            body.addView(spinner, LinearLayout.LayoutParams(dp(48), dp(48)).apply { gravity=Gravity.CENTER_HORIZONTAL })
+            space()
+            if(session.operationKind=="prepare") {
+                progressText = label(session.status, 15f).also { body.addView(it) }
+                space()
+            }
+            if(session.engine.mode=="cloud") {
+                body.addView(label("취소해도 이미 처리된 요청에는 비용이 발생할 수 있어요.",12f,color=muted))
+                space()
+            }
             button(body, "작업 취소") { session.cancel() }
         } else {
             when (session.screen) {
