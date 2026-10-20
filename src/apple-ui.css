@@ -28,7 +28,15 @@ button, [role="button"], .chip {
 }
 button { transition: transform var(--duration-press) var(--ease-out), background-color var(--duration-press) ease; }
 button:active:not(:disabled) { transform: scale(.97); }
-button:focus-visible, input:focus-visible, label:focus-within { outline: 3px solid #0066d6; outline-offset: 3px; }
+/* One focus cue per control: never outline the surrounding label as well. */
+button:focus:not(:focus-visible), select:focus:not(:focus-visible) { outline: none; }
+button:focus-visible, select:focus-visible, input[type="checkbox"]:focus-visible { outline: 3px solid #0066d6; outline-offset: 3px; }
+/* Text inputs match :focus-visible even on mouse click. Use a quiet border
+   instead of the browser's blue ring, retaining a visible editing cue. */
+input:not([type="checkbox"]):focus { outline: none; box-shadow: none; border-color: #86868b; }
+@media (forced-colors: active) {
+  input:not([type="checkbox"]):focus { outline: 2px solid Highlight; outline-offset: 2px; }
+}
 button:disabled { opacity: .45; }
 .demo-layout { max-width: 1220px; grid-template-columns: minmax(0, 1fr) 460px; gap: 24px 80px; padding: 28px 48px; }
 .brand { color: var(--ink); letter-spacing: -.035em; font-size: 18px; }

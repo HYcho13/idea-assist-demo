@@ -5,6 +5,14 @@ import { readFileSync } from 'node:fs'
 const css = readFileSync(new URL('../src/apple-ui.css', import.meta.url), 'utf8')
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/demo-main.jsx', import.meta.url), 'utf8')
+const baseCss = readFileSync(new URL('../src/demo.css', import.meta.url), 'utf8')
+
+test('input focus has one quiet border without a duplicate label ring, preserving keyboard focus', () => {
+  assert.doesNotMatch(css + baseCss, /label:focus-within/)
+  assert.match(css, /input:not\(\[type="checkbox"\]\):focus \{[^}]*outline: none;[^}]*box-shadow: none;[^}]*border-color: #86868b/)
+  assert.match(css, /button:focus-visible, select:focus-visible, input\[type="checkbox"\]:focus-visible \{ outline: 3px solid/)
+  assert.match(css, /@media \(forced-colors: active\)[\s\S]*outline: 2px solid Highlight/)
+})
 
 test('Apple presentation keeps mobile zoom, safe area and readable input sizing', () => {
   assert.match(html, /viewport-fit=cover/)
